@@ -1,6 +1,9 @@
 from django.db import transaction
 from rest_framework.exceptions import PermissionDenied
+from django.db.models import Prefetch
 from rest_framework.viewsets import ModelViewSet
+
+from catalog.models import Product
 
 from branches.models import Branch
 
@@ -38,7 +41,20 @@ class CompanyViewSet(
 
         if self.action == "retrieve":
             queryset = queryset.prefetch_related(
-                "branches"
+                "branches",
+                Prefetch(
+                    "products",
+                    queryset=(
+                        Product.objects
+                        .select_related(
+                            "company",
+                            "category",
+                            "brand",
+                            "base_unit",
+                        )
+                        .order_by("name")
+                    ),
+                ),
             )
 
         return queryset

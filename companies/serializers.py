@@ -62,20 +62,21 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             "currency",
             "timezone",
             "is_active",
-            "branches",
-            "products",
             "created_at",
             "updated_at",
+            "branches",
+            "products",
         )
 
         read_only_fields = (
             "id",
             "business_type_display",
-            "branches",
-            "products",
             "created_at",
             "updated_at",
+            "branches",
+            "products",
         )
+
 
 class CompanyMembershipListSerializer(
     serializers.ModelSerializer
