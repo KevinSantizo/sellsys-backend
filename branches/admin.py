@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import Branch
+from .models import Branch, BranchMembership
+
 
 # Register your models here.
 
@@ -26,3 +27,30 @@ class BranchAdmin(admin.ModelAdmin):
 
     autocomplete_fields = ("company",)
     ordering = ("company__name", "name")
+
+
+@admin.register(BranchMembership)
+class BranchMembershipAdmin(admin.ModelAdmin):
+    list_display = (
+        "company_membership",
+        "branch",
+        "is_default",
+        "is_active",
+    )
+
+    list_filter = (
+        "is_default",
+        "is_active",
+        "branch__company",
+    )
+
+    search_fields = (
+        "company_membership__user__email",
+        "company_membership__company__name",
+        "branch__name",
+    )
+
+    autocomplete_fields = (
+        "company_membership",
+        "branch",
+    )

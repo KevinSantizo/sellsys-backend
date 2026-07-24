@@ -55,4 +55,10 @@ urlpatterns = [
         ),
         name="swagger-ui",
     ),
+
+    path(
+        "api/v1/branch-memberships/",
+        include("branches.membership_urls"),
+    ),
+
 ]

@@ -35,4 +35,13 @@ urlpatterns = [
         TokenRefreshView.as_view(),
         name="token-refresh",
     ),
+
+    path(
+        "context/",
+        views.SessionContextViewSet.as_view({
+            "get": "context",
+        }),
+        name="session-context",
+    ),
+
 ]
