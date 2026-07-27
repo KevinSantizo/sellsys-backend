@@ -61,4 +61,9 @@ urlpatterns = [
         include("branches.membership_urls"),
     ),
 
+    path(
+        "api/v1/sales/",
+        include("sales.urls"),
+    ),
+
 ]

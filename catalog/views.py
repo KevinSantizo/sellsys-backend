@@ -18,6 +18,7 @@ from .serializers import (
     UnitOfMeasureListSerializer,
 )
 
+from .pagination import ProductPagination
 
 class CatalogBaseViewSet(
     CompanyAccessMixin,
@@ -137,6 +138,7 @@ class UnitOfMeasureViewSet(CatalogBaseViewSet):
 
 
 class ProductViewSet(CatalogBaseViewSet):
+    pagination_class = ProductPagination
     filter_backends = (
         DjangoFilterBackend,
         SearchFilter,
@@ -166,9 +168,7 @@ class ProductViewSet(CatalogBaseViewSet):
         "created_at",
     )
 
-    ordering = (
-        "name",
-    )
+    ordering = ("-created_at","-id",)
 
     def get_queryset(self):
         queryset = (
@@ -181,7 +181,7 @@ class ProductViewSet(CatalogBaseViewSet):
             )
         )
 
-        return queryset.order_by("name")
+        return queryset.order_by( "-created_at", "-id",)
 
     def get_serializer_class(self):
         if self.action == "list":
