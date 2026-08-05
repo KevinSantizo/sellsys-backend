@@ -19,6 +19,15 @@ from .models import (
 
 from .access import get_allowed_branches
 
+from inventory.services import (
+    InventoryStockError,
+    deduct_sale_stock,
+    lock_and_validate_sale_stock,
+)
+
+
+
+
 MONEY_PLACES = Decimal("0.01")
 
 
@@ -565,6 +574,22 @@ class SaleCheckoutSerializer(
             payment_total - total
         )
 
+        try:
+            locked_stocks = (
+                lock_and_validate_sale_stock(
+                    company=company,
+                    branch=branch,
+                    calculated_items=(
+                        calculated_items
+                    ),
+                )
+            )
+        except InventoryStockError as error:
+            raise serializers.ValidationError({
+                "items": str(error),
+            }) from error
+
+
         sale = Sale.objects.create(
             company=company,
             branch=branch,
@@ -648,6 +673,13 @@ class SaleCheckoutSerializer(
         Payment.objects.bulk_create(
             payments,
             batch_size=20,
+        )
+
+        deduct_sale_stock(
+            sale=sale,
+            calculated_items=calculated_items,
+            locked_stocks=locked_stocks,
+            user=request.user,
         )
 
         return sale

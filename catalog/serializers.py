@@ -246,6 +246,13 @@ class ProductListSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    current_stock = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+        read_only=True,
+    )
+
+
     class Meta:
         model = Product
         fields = (
@@ -262,6 +269,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "cost_price",
             "sale_price",
             "track_inventory",
+            "current_stock",
             "is_active",
         )
 
