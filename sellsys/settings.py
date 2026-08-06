@@ -53,6 +53,8 @@ INSTALLED_APPS = [
     "branches",
     "billing",
     "catalog",
+    "sales",
+    "inventory"
 ]
 
 MIDDLEWARE = [

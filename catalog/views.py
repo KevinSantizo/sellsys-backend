@@ -18,6 +18,20 @@ from .serializers import (
     UnitOfMeasureListSerializer,
 )
 
+from .pagination import ProductPagination
+
+from decimal import Decimal
+
+from django.db.models import (
+    DecimalField,
+    OuterRef,
+    Subquery,
+    Value,
+)
+from django.db.models.functions import Coalesce
+
+from inventory.models import ProductStock
+
 
 class CatalogBaseViewSet(
     CompanyAccessMixin,
@@ -137,6 +151,7 @@ class UnitOfMeasureViewSet(CatalogBaseViewSet):
 
 
 class ProductViewSet(CatalogBaseViewSet):
+    pagination_class = ProductPagination
     filter_backends = (
         DjangoFilterBackend,
         SearchFilter,
@@ -166,13 +181,11 @@ class ProductViewSet(CatalogBaseViewSet):
         "created_at",
     )
 
-    ordering = (
-        "name",
-    )
+    ordering = ("-created_at","-id",)
 
     def get_queryset(self):
         queryset = (
-            self.get_base_queryset(Product)
+            Product.objects
             .select_related(
                 "company",
                 "category",
@@ -181,7 +194,66 @@ class ProductViewSet(CatalogBaseViewSet):
             )
         )
 
-        return queryset.order_by("name")
+        company_id = (
+            self.request.query_params.get(
+                "company_id"
+            )
+        )
+
+        branch_id = (
+            self.request.query_params.get(
+                "branch_id"
+            )
+        )
+
+        if company_id:
+            queryset = queryset.filter(
+                company_id=company_id,
+            )
+
+        stock_output_field = DecimalField(
+            max_digits=14,
+            decimal_places=3,
+        )
+
+        if branch_id:
+            stock_subquery = (
+                ProductStock.objects
+                .filter(
+                    company_id=company_id,
+                    branch_id=branch_id,
+                    product_id=OuterRef("pk"),
+                )
+                .values("quantity")[:1]
+            )
+
+            queryset = queryset.annotate(
+                current_stock=Coalesce(
+                    Subquery(
+                        stock_subquery,
+                        output_field=(
+                            stock_output_field
+                        ),
+                    ),
+                    Value(
+                        Decimal("0.000"),
+                    ),
+                    output_field=(
+                        stock_output_field
+                    ),
+                )
+            )
+        else:
+            queryset = queryset.annotate(
+                current_stock=Value(
+                    Decimal("0.000"),
+                    output_field=(
+                        stock_output_field
+                    ),
+                )
+            )
+
+        return queryset
 
     def get_serializer_class(self):
         if self.action == "list":
