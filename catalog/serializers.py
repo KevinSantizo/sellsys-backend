@@ -4,6 +4,17 @@ from common.serializers import CompanyOwnedModelSerializer
 
 from .models import Brand, Category, Product, UnitOfMeasure
 
+from decimal import Decimal
+
+from django.db import transaction
+from rest_framework import serializers
+
+from branches.models import Branch
+from inventory.models import (
+    InventoryMovement,
+    InventoryMovementType,
+    ProductStock,
+)
 
 class CategorySummarySerializer(serializers.ModelSerializer):
     class Meta:
@@ -331,6 +342,21 @@ class ProductDetailSerializer(
         read_only=True,
     )
 
+    branch_id = serializers.UUIDField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+
+    initial_stock = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+        min_value=Decimal("0.000"),
+        write_only=True,
+        required=False,
+        default=Decimal("0.000"),
+    )
+
     class Meta:
         model = Product
         fields = (
@@ -355,6 +381,8 @@ class ProductDetailSerializer(
             "is_active",
             "created_at",
             "updated_at",
+            "branch_id",
+            "initial_stock",
         )
 
         read_only_fields = (
@@ -527,7 +555,108 @@ class ProductDetailSerializer(
                     "código de barras en la empresa."
                 )
 
+        # Stock inicial solamente aplica al crear
+        if self.instance is None:
+            branch_id = attrs.get("branch_id")
+            initial_stock = attrs.get(
+                "initial_stock",
+                Decimal("0.000"),
+            )
+
+            track_inventory = attrs.get(
+                "track_inventory",
+                True,
+            )
+
+            if (
+                    product_type == Product.ProductType.PRODUCT
+                    and track_inventory
+            ):
+                if not branch_id:
+                    errors["branch_id"] = (
+                        "Debes seleccionar una sucursal "
+                        "para registrar el stock inicial."
+                    )
+
+                if initial_stock < 0:
+                    errors["initial_stock"] = (
+                        "El stock inicial no puede ser negativo."
+                    )
+
+                if branch_id:
+                    try:
+                        branch = Branch.objects.get(
+                            id=branch_id,
+                            company=company,
+                            is_active=True,
+                        )
+                    except Branch.DoesNotExist:
+                        errors["branch_id"] = (
+                            "La sucursal no pertenece a la "
+                            "empresa o está inactiva."
+                        )
+
         if errors:
             raise serializers.ValidationError(errors)
 
+
         return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        request = self.context["request"]
+
+        branch_id = validated_data.pop(
+            "branch_id",
+            None,
+        )
+
+        initial_stock = validated_data.pop(
+            "initial_stock",
+            Decimal("0.000"),
+        )
+
+        product = super().create(
+            validated_data
+        )
+
+        if (
+                product.product_type
+                != Product.ProductType.PRODUCT
+                or not product.track_inventory
+        ):
+            return product
+
+        branch = Branch.objects.get(
+            id=branch_id,
+            company=product.company,
+            is_active=True,
+        )
+
+        stock = ProductStock.objects.create(
+            company=product.company,
+            branch=branch,
+            product=product,
+            quantity=initial_stock,
+        )
+
+        if initial_stock > 0:
+            InventoryMovement.objects.create(
+                company=product.company,
+                branch=branch,
+                product=product,
+                movement_type=(
+                    InventoryMovementType.INITIAL_STOCK
+                ),
+                quantity=initial_stock,
+                previous_stock=Decimal("0.000"),
+                new_stock=stock.quantity,
+                reference="PRODUCT-CREATION",
+                notes=(
+                    "Stock inicial registrado "
+                    "al crear el producto."
+                ),
+                created_by=request.user,
+            )
+
+        return product
