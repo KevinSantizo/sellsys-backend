@@ -54,7 +54,10 @@ INSTALLED_APPS = [
     "billing",
     "catalog",
     "sales",
-    "inventory"
+    "inventory",
+    "purchases",
+    "expenses",
+    "cash",
 ]
 
 MIDDLEWARE = [

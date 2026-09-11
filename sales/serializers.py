@@ -9,6 +9,11 @@ from rest_framework import serializers
 from catalog.models import Product
 from companies.models import Company
 
+from cash.models import CashMovementDirection, CashMovementType, CashMovementSource
+from cash.services import get_open_cash_session, create_cash_movement
+
+
+
 from .models import (
     Payment,
     PaymentMethod,
@@ -24,9 +29,6 @@ from inventory.services import (
     deduct_sale_stock,
     lock_and_validate_sale_stock,
 )
-
-
-
 
 MONEY_PLACES = Decimal("0.01")
 
@@ -310,41 +312,15 @@ class PaymentInputSerializer(
 
         return attrs
 
-class SaleCheckoutSerializer(
-    serializers.Serializer,
-):
+class SaleCheckoutSerializer(serializers.Serializer,):
     company_id = serializers.UUIDField()
     branch_id = serializers.UUIDField()
-
-    customer_name = serializers.CharField(
-        max_length=150,
-        required=False,
-        allow_blank=True,
-        default="",
-    )
-
-    customer_tax_id = serializers.CharField(
-        max_length=30,
-        required=False,
-        allow_blank=True,
-        default="",
-    )
-
-    notes = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        default="",
-    )
-
-    items = SaleItemInputSerializer(
-        many=True,
-        allow_empty=False,
-    )
-
-    payments = PaymentInputSerializer(
-        many=True,
-        allow_empty=False,
-    )
+    cash_session_id = serializers.UUIDField(required=False, allow_null=True)
+    customer_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default="",)
+    customer_tax_id = serializers.CharField(max_length=30, required=False, allow_blank=True, default="",)
+    notes = serializers.CharField(required=False, allow_blank=True, default="",)
+    items = SaleItemInputSerializer(many=True, allow_empty=False,)
+    payments = PaymentInputSerializer(many=True, allow_empty=False,)
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -437,42 +413,16 @@ class SaleCheckoutSerializer(
         total = Decimal("0.00")
 
         for item in item_data:
-            product = product_map[
-                item["product_id"]
-            ]
-
+            product = product_map[item["product_id"]]
             quantity = item["quantity"]
-
-            discount_percent = item.get(
-                "discount_percent",
-                Decimal("0.00"),
-            )
-
-            unit_price = quantize_money(
-                product.sale_price
-            )
-
-            line_subtotal = quantize_money(
-                quantity * unit_price
-            )
-
-            discount_amount = quantize_money(
-                line_subtotal
-                * discount_percent
-                / Decimal("100")
-            )
-
-            line_total = quantize_money(
-                line_subtotal
-                - discount_amount
-            )
-
+            discount_percent = item.get("discount_percent", Decimal("0.00"),)
+            unit_price = quantize_money(product.sale_price)
+            line_subtotal = quantize_money(quantity * unit_price)
+            discount_amount = quantize_money(line_subtotal * discount_percent / Decimal("100") )
+            line_total = quantize_money(line_subtotal - discount_amount)
             subtotal += line_subtotal
-            discount_total += (
-                discount_amount
-            )
+            discount_total += (discount_amount)
             total += line_total
-
             calculated_items.append({
                 "product": product,
                 "quantity": quantity,
@@ -491,12 +441,8 @@ class SaleCheckoutSerializer(
 
         subtotal = quantize_money(subtotal)
 
-        discount_total = quantize_money(
-            discount_total
-        )
-
+        discount_total = quantize_money(discount_total)
         total = quantize_money(total)
-
         payment_total = quantize_money(
             sum(
                 (
@@ -508,10 +454,19 @@ class SaleCheckoutSerializer(
             )
         )
 
-        if payment_total < total:
-            missing_amount = quantize_money(
-                total - payment_total
+        cash_total = quantize_money(
+            sum(
+                (
+                    payment["amount"]
+                    for payment in attrs["payments"]
+                    if payment["method"] == PaymentMethod.CASH
+                ),
+                Decimal("0.00"),
             )
+        )
+
+        if payment_total < total:
+            missing_amount = quantize_money(total - payment_total)
 
             raise serializers.ValidationError({
                 "payments": (
@@ -520,59 +475,52 @@ class SaleCheckoutSerializer(
                 )
             })
 
+        change_amount = quantize_money(payment_total - total)
+
+        if cash_total > Decimal("0.00") and not attrs.get("cash_session_id"):
+            raise serializers.ValidationError({
+                "cash_session_id": "Debes seleccionar una caja abierta para registrar pagos en efectivo."
+            })
+
+        if change_amount > cash_total:
+            raise serializers.ValidationError({
+                "payments": "El cambio no puede ser mayor al monto recibido en efectivo."
+            })
+
         attrs["company"] = company
         attrs["branch"] = branch
-        attrs["calculated_items"] = (
-            calculated_items
-        )
+        attrs["calculated_items"] = (calculated_items)
         attrs["subtotal"] = subtotal
-        attrs["discount_total"] = (
-            discount_total
-        )
+        attrs["discount_total"] = (discount_total)
         attrs["total"] = total
-        attrs["payment_total"] = (
-            payment_total
-        )
+        attrs["payment_total"] = (payment_total)
+        attrs["cash_total"] = cash_total
 
         return attrs
 
     @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
-
-        company = validated_data[
-            "company"
-        ]
-
-        branch = validated_data[
-            "branch"
-        ]
-
-        calculated_items = validated_data[
-            "calculated_items"
-        ]
-
-        payments_data = validated_data[
-            "payments"
-        ]
-
-        subtotal = validated_data[
-            "subtotal"
-        ]
-
-        discount_total = validated_data[
-            "discount_total"
-        ]
-
+        company = validated_data[ "company" ]
+        branch = validated_data[ "branch"  ]
+        calculated_items = validated_data[ "calculated_items" ]
+        payments_data = validated_data[ "payments" ]
+        subtotal = validated_data[ "subtotal" ]
+        discount_total = validated_data[ "discount_total" ]
         total = validated_data["total"]
+        payment_total = validated_data[ "payment_total" ]
+        cash_total = validated_data["cash_total"]
+        change_amount = quantize_money( payment_total - total )
 
-        payment_total = validated_data[
-            "payment_total"
-        ]
+        cash_session = None
 
-        change_amount = quantize_money(
-            payment_total - total
-        )
+        if cash_total > Decimal("0.00"):
+            cash_session = get_open_cash_session(
+                cash_session_id=validated_data.get("cash_session_id"),
+                company=company,
+                branch=branch,
+            )
+
 
         try:
             locked_stocks = (
@@ -681,6 +629,22 @@ class SaleCheckoutSerializer(
             locked_stocks=locked_stocks,
             user=request.user,
         )
+
+        if cash_session:
+            cash_amount = quantize_money(cash_total - change_amount)
+
+            if cash_amount > Decimal("0.00"):
+                create_cash_movement(
+                    cash_session=cash_session,
+                    direction=CashMovementDirection.IN,
+                    movement_type=CashMovementType.SALE,
+                    amount=cash_amount,
+                    source_type=CashMovementSource.SALE,
+                    source_id=sale.id,
+                    reference=sale.sale_number,
+                    notes=f"Venta {sale.sale_number}",
+                    user=request.user,
+                )
 
         return sale
 

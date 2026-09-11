@@ -182,3 +182,75 @@ def deduct_sale_stock(
             movements,
             batch_size=100,
         )
+
+
+def restore_sale_stock(*, sale, user) -> None:
+    """
+    Devuelve al inventario las existencias de una venta cancelada
+    y registra movimientos SALE_RETURN.
+
+    Debe ejecutarse dentro de transaction.atomic().
+    """
+
+    connection = transaction.get_connection()
+
+    if not connection.in_atomic_block:
+        raise RuntimeError("La devolución de inventario debe ejecutarse dentro de una transacción.")
+
+    tracked_items = [ item for item in sale.items.select_related("product").all() if item.product.track_inventory ]
+
+    if not tracked_items:
+        return
+
+    product_ids = [ item.product_id for item in tracked_items ]
+
+    stocks = (
+        ProductStock.objects
+        .select_for_update()
+        .filter(
+            company=sale.company,
+            branch=sale.branch,
+            product_id__in=product_ids,
+        )
+        .select_related("product", "branch")
+    )
+
+    stock_map = { stock.product_id: stock for stock in stocks }
+
+    for item in tracked_items:
+        if item.product_id not in stock_map:
+            raise InventoryStockError(
+                f'El producto "{item.product_name}" no tiene stock registrado en la sucursal "{sale.branch.name}".'
+            )
+
+    movements = []
+
+    for item in tracked_items:
+        stock = stock_map[item.product_id]
+        quantity = Decimal(item.quantity)
+
+        previous_stock = stock.quantity
+        new_stock = previous_stock + quantity
+
+        stock.quantity = new_stock
+        stock.save(update_fields=( "quantity", "updated_at", ))
+
+        movements.append(
+            InventoryMovement(
+                company=sale.company,
+                branch=sale.branch,
+                product=item.product,
+                movement_type=InventoryMovementType.SALE_RETURN,
+                quantity=quantity,
+                previous_stock=previous_stock,
+                new_stock=new_stock,
+                sale=sale,
+                reference=sale.sale_number,
+                notes="Entrada automática generada al cancelar la venta.",
+                created_by=user,
+            )
+        )
+
+    if movements:
+        InventoryMovement.objects.bulk_create(movements, batch_size=100)
+

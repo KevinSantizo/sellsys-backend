@@ -12,35 +12,13 @@ from companies.models import Company
 
 
 class InventoryMovementType(models.TextChoices):
-    INITIAL_STOCK = (
-        "INITIAL_STOCK",
-        "Stock inicial",
-    )
-
-    PURCHASE = (
-        "PURCHASE",
-        "Entrada por compra",
-    )
-
-    SALE = (
-        "SALE",
-        "Salida por venta",
-    )
-
-    ADJUSTMENT_IN = (
-        "ADJUSTMENT_IN",
-        "Ajuste de entrada",
-    )
-
-    ADJUSTMENT_OUT = (
-        "ADJUSTMENT_OUT",
-        "Ajuste de salida",
-    )
-
-    SALE_RETURN = (
-        "SALE_RETURN",
-        "Devolución de venta",
-    )
+    INITIAL_STOCK = ("INITIAL_STOCK", "Stock inicial",)
+    PURCHASE = ("PURCHASE", "Entrada por compra",)
+    PURCHASE_REVERSAL = "PURCHASE_REVERSAL", "Reversión de compra"
+    SALE = ("SALE", "Salida por venta", )
+    ADJUSTMENT_IN = ("ADJUSTMENT_IN", "Ajuste de entrada",)
+    ADJUSTMENT_OUT = ("ADJUSTMENT_OUT", "Ajuste de salida",)
+    SALE_RETURN = ("SALE_RETURN", "Devolución de venta",)
 
 
 class ProductStock(models.Model):
