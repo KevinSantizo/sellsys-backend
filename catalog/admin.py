@@ -92,6 +92,7 @@ class ProductAdmin(admin.ModelAdmin):
         "category",
         "brand",
         "sale_price",
+        "cost_price",
         "track_inventory",
         "is_active",
     )

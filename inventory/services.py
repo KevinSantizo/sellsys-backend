@@ -35,6 +35,11 @@ def lock_and_validate_sale_stock(
             "dentro de una transacción."
         )
 
+    if branch.company_id != company.id:
+        raise InventoryStockError(
+            "La sucursal no pertenece a la empresa seleccionada."
+        )
+
     tracked_items = [
         item
         for item in calculated_items
@@ -43,6 +48,15 @@ def lock_and_validate_sale_stock(
 
     if not tracked_items:
         return {}
+
+    for item in tracked_items:
+        product = item["product"]
+
+        if product.company_id != company.id:
+            raise InventoryStockError(
+                f'El producto "{product.name}" no pertenece '
+                "a la empresa seleccionada."
+            )
 
     product_ids = [
         item["product"].id
@@ -72,7 +86,6 @@ def lock_and_validate_sale_stock(
 
     for item in tracked_items:
         product = item["product"]
-
         requested_quantity = Decimal(
             item["quantity"]
         )

@@ -13,6 +13,11 @@ from django.db.models import Q
 
 from cash.models import CashMovement, CashMovementDirection, CashMovementType, CashMovementSource, CashSessionStatus
 from cash.services import get_open_cash_session, create_cash_movement, reverse_cash_movement
+from rest_framework.exceptions import NotFound
+from common.access import (
+    get_user_company_branch_scope,
+    validate_company_branch_access,
+)
 
 # Create your views here.
 
@@ -205,62 +210,18 @@ class ExpenseViewSet(
     )
 
     def get_queryset(self):
-        user = self.request.user
-
-        company_memberships = list(
-            CompanyMembership.objects
-            .filter(
-                user=user,
-                is_active=True,
-                company__is_active=True,
-            )
-            .select_related(
-                "company",
-            )
-        )
-
-        allowed_company_ids = [
-            membership.company_id
-            for membership
-            in company_memberships
-        ]
-
-        owner_company_ids = [
-            membership.company_id
-            for membership in company_memberships
-            if membership.role == "OWNER"
-        ]
-
-        assigned_branch_ids = (
-            BranchMembership.objects
-            .filter(
-                company_membership__user=user,
-                company_membership__is_active=True,
-                is_active=True,
-                branch__is_active=True,
-                branch__company_id__in=(
-                    allowed_company_ids
-                ),
-            )
-            .values_list(
-                "branch_id",
-                flat=True,
-            )
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(
+            self.request.user
         )
 
         queryset = (
             Expense.objects
             .filter(
                 Q(
-                    company_id__in=(
-                        owner_company_ids
-                    )
+                    company_id__in=owner_company_ids,
                 )
-                |
-                Q(
-                    branch_id__in=(
-                        assigned_branch_ids
-                    )
+                | Q(
+                    branch_id__in=assigned_branch_ids,
                 )
             )
             .select_related(
@@ -272,40 +233,28 @@ class ExpenseViewSet(
             )
         )
 
-        company_id = (
-            self.request.query_params.get(
-                "company_id"
-            )
+        company_id = self.request.query_params.get(
+            "company_id"
         )
 
-        branch_id = (
-            self.request.query_params.get(
-                "branch_id"
-            )
+        branch_id = self.request.query_params.get(
+            "branch_id"
         )
 
-        category_id = (
-            self.request.query_params.get(
-                "category_id"
-            )
+        category_id = self.request.query_params.get(
+            "category_id"
         )
 
-        supplier_id = (
-            self.request.query_params.get(
-                "supplier_id"
-            )
+        supplier_id = self.request.query_params.get(
+            "supplier_id"
         )
 
-        expense_status = (
-            self.request.query_params.get(
-                "status"
-            )
+        expense_status = self.request.query_params.get(
+            "status"
         )
 
-        payment_method = (
-            self.request.query_params.get(
-                "payment_method"
-            )
+        payment_method = self.request.query_params.get(
+            "payment_method"
         )
 
         if company_id:
@@ -340,81 +289,16 @@ class ExpenseViewSet(
 
         return queryset.distinct()
 
-
-    def perform_create(self, serializer,):
+    def perform_create(self, serializer):
         user = self.request.user
+        company = serializer.validated_data["company"]
+        branch = serializer.validated_data["branch"]
 
-        company = (
-            serializer.validated_data[
-                "company"
-            ]
+        validate_company_branch_access(
+            user,
+            company.id,
+            branch.id,
         )
-
-        branch = (
-            serializer.validated_data[
-                "branch"
-            ]
-        )
-
-        company_membership = (
-            CompanyMembership.objects
-            .filter(
-                user=user,
-                company=company,
-                is_active=True,
-                company__is_active=True,
-            )
-            .first()
-        )
-
-        if not company_membership:
-            raise PermissionDenied(
-                (
-                    "No tienes acceso "
-                    "a esta empresa."
-                )
-            )
-
-        is_owner = (
-                company_membership.role
-                == "OWNER"
-        )
-
-        if (
-            branch.company_id
-            != company.id
-        ):
-            raise ValidationError(
-                {
-                    "branch_id": (
-                        "La sucursal no "
-                        "pertenece a la "
-                        "empresa seleccionada."
-                    )
-                }
-            )
-
-        if not is_owner:
-            has_branch_access = (
-                BranchMembership.objects
-                .filter(
-                    company_membership=(
-                        company_membership
-                    ),
-                    branch=branch,
-                    is_active=True,
-                    branch__is_active=True,
-                )
-                .exists()
-            )
-
-            if not has_branch_access:
-                raise PermissionDenied(
-                    (
-                        "No tienes acceso "
-                        "a esta sucursal."
-                    )
-                )
 
         serializer.save(
             created_by=user,
@@ -449,7 +333,7 @@ class ExpenseViewSet(
             try:
                 expense = self.get_queryset().select_for_update().get(pk=pk)
             except Expense.DoesNotExist:
-                raise ValidationError({"detail": "El gasto no existe o no tienes acceso a él."})
+                raise NotFound("El gasto no existe o no tienes acceso a él.")
 
             if expense.status != ExpenseStatus.DRAFT:
                 raise ValidationError({"detail": "Solo se pueden completar gastos en borrador."})
@@ -483,7 +367,7 @@ class ExpenseViewSet(
             try:
                 expense = self.get_queryset().select_for_update().get(pk=pk)
             except Expense.DoesNotExist:
-                raise ValidationError({"detail": "El gasto no existe o no tienes acceso a él."})
+                raise NotFound("El gasto no existe o no tienes acceso a él.")
 
             if expense.status == ExpenseStatus.CANCELLED:
                 raise ValidationError({"detail": "El gasto ya está cancelado."})

@@ -266,6 +266,13 @@ class SaleItem(models.Model):
         decimal_places=2,
     )
 
+    unit_cost = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
     discount_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,

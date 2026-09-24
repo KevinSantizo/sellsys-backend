@@ -106,6 +106,7 @@ class BranchMembershipDetailSerializer(
             source="company_membership",
             queryset=CompanyMembership.objects.filter(
                 is_active=True,
+                company__is_active=True,
             ).select_related(
                 "company",
                 "user",
@@ -118,6 +119,7 @@ class BranchMembershipDetailSerializer(
         source="branch",
         queryset=Branch.objects.filter(
             is_active=True,
+            company__is_active=True,
         ),
         write_only=True,
     )

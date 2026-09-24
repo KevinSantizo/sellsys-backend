@@ -11,8 +11,7 @@ from companies.models import Company
 
 from cash.models import CashMovementDirection, CashMovementType, CashMovementSource
 from cash.services import get_open_cash_session, create_cash_movement
-
-
+from common.access import validate_company_branch_access
 
 from .models import (
     Payment,
@@ -312,6 +311,7 @@ class PaymentInputSerializer(
 
         return attrs
 
+
 class SaleCheckoutSerializer(serializers.Serializer,):
     company_id = serializers.UUIDField()
     branch_id = serializers.UUIDField()
@@ -329,37 +329,13 @@ class SaleCheckoutSerializer(serializers.Serializer,):
         company_id = attrs["company_id"]
         branch_id = attrs["branch_id"]
 
-        try:
-            company = Company.objects.get(
-                id=company_id,
-                is_active=True,
-                memberships__user=user,
-                memberships__is_active=True,
-            )
-        except Company.DoesNotExist as error:
-            raise serializers.ValidationError({
-                "company_id": (
-                    "No tienes acceso a esta empresa."
-                )
-            }) from error
-
-        branch = (
-            get_allowed_branches(
-                user=user,
-                company=company,
-            )
-            .filter(id=branch_id)
-            .first()
+        membership, branch = validate_company_branch_access(
+            user,
+            company_id,
+            branch_id,
         )
-
-        if not branch:
-            raise serializers.ValidationError({
-                "branch_id": (
-                    "No tienes acceso a esta "
-                    "sucursal o está inactiva."
-                )
-            })
-
+        
+        company = membership.company
         item_data = attrs["items"]
 
         product_ids = [
@@ -573,28 +549,15 @@ class SaleCheckoutSerializer(serializers.Serializer,):
             SaleItem(
                 sale=sale,
                 product=item["product"],
-                product_name=(
-                    item["product"].name
-                ),
-                product_sku=(
-                    item["product"].sku
-                ),
+                product_name=item["product"].name,
+                product_sku=item["product"].sku,
                 quantity=item["quantity"],
-                unit_price=(
-                    item["unit_price"]
-                ),
-                discount_percent=(
-                    item["discount_percent"]
-                ),
-                discount_amount=(
-                    item["discount_amount"]
-                ),
-                line_subtotal=(
-                    item["line_subtotal"]
-                ),
-                line_total=(
-                    item["line_total"]
-                ),
+                unit_price=item["unit_price"],
+                unit_cost=item["product"].cost_price,
+                discount_percent=(item["discount_percent"]),
+                discount_amount=(item["discount_amount"]),
+                line_subtotal=(item["line_subtotal"]),
+                line_total=(item["line_total"]),
             )
             for item in calculated_items
         ]

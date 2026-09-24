@@ -30,7 +30,10 @@ from rest_framework.exceptions import ValidationError
 from cash.models import CashMovement, CashMovementType, CashMovementSource, CashSessionStatus
 from cash.services import get_open_cash_session, reverse_cash_movement
 from inventory.services import InventoryStockError, restore_sale_stock
-
+from common.access import (
+    get_user_company_branch_scope,
+    validate_company_branch_access,
+)
 
 class SaleViewSet(
     mixins.ListModelMixin,
@@ -77,62 +80,20 @@ class SaleViewSet(
 
         return SaleDetailSerializer
 
+
     def get_queryset(self):
-        user = self.request.user
-
-        company_memberships = list(
-            CompanyMembership.objects
-            .filter(
-                user=user,
-                is_active=True,
-                company__is_active=True,
-            )
-        )
-
-        allowed_company_ids = [
-            membership.company_id
-            for membership
-            in company_memberships
-        ]
-
-        owner_company_ids = [
-            membership.company_id
-            for membership
-            in company_memberships
-            if get_membership_role_code(
-                membership,
-            ) == "OWNER"
-        ]
-
-        assigned_branch_ids = (
-            BranchMembership.objects
-            .filter(
-                company_membership__user=user,
-                company_membership__is_active=True,
-                is_active=True,
-                branch__is_active=True,
-                branch__company_id__in=(
-                    allowed_company_ids
-                ),
-            )
-            .values_list(
-                "branch_id",
-                flat=True,
-            )
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(
+            self.request.user
         )
 
         queryset = (
             Sale.objects
             .filter(
                 Q(
-                    company_id__in=(
-                        owner_company_ids
-                    )
+                    company_id__in=owner_company_ids,
                 )
                 | Q(
-                    branch_id__in=(
-                        assigned_branch_ids
-                    )
+                    branch_id__in=assigned_branch_ids,
                 )
             )
             .select_related(
@@ -148,22 +109,16 @@ class SaleViewSet(
             )
         )
 
-        company_id = (
-            self.request.query_params.get(
-                "company_id"
-            )
+        company_id = self.request.query_params.get(
+            "company_id"
         )
 
-        branch_id = (
-            self.request.query_params.get(
-                "branch_id"
-            )
+        branch_id = self.request.query_params.get(
+            "branch_id"
         )
 
-        sale_status = (
-            self.request.query_params.get(
-                "status"
-            )
+        sale_status = self.request.query_params.get(
+            "status"
         )
 
         if company_id:
@@ -182,6 +137,7 @@ class SaleViewSet(
             )
 
         return queryset.distinct()
+
 
     def weekly_summary(self, request):
         company_id = request.query_params.get("company_id")
@@ -210,19 +166,19 @@ class SaleViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        validate_company_branch_access(
+            request.user,
+            company_id,
+            branch_id,
+        )
+
         today = timezone.localdate()
 
-
         week_start = (today - timedelta(days=today.weekday()))
-
         next_week_start = (week_start + timedelta(days=7))
-
         week_end = ( next_week_start - timedelta(days=1))
-
         current_timezone = (timezone.get_current_timezone())
-
         week_start_datetime = (timezone.make_aware(datetime.combine(week_start, time.min,),current_timezone,))
-
         next_week_start_datetime = (timezone.make_aware(datetime.combine(next_week_start,time.min,),current_timezone,))
 
         queryset = (
@@ -374,6 +330,17 @@ class SaleViewSet(
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        print("USER ID:", request.user.id)
+        print("USER EMAIL:", request.user.email)
+        print("COMPANY ID:", company_id)
+        print("BRANCH ID:", branch_id)
+
+        validate_company_branch_access(
+            request.user,
+            company_id,
+            branch_id,
+        )
 
         today = timezone.localdate()
 

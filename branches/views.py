@@ -13,50 +13,25 @@ from .serializers import (
     BranchMembershipListSerializer,
 )
 
+from common.access import get_user_company_branch_scope
+from rest_framework.permissions import IsAuthenticated
 
 class BranchViewSet(
     CompanyAccessMixin,
     ModelViewSet,
 ):
+    permission_classes = [ IsAuthenticated ]
+
     def get_queryset(self):
-        user_memberships = CompanyMembership.objects.filter(
-            user=self.request.user,
-            is_active=True,
-            company__is_active=True,
-        )
-
-        unrestricted_company_ids = (
-            user_memberships
-            .filter(
-                role__in=[
-                    CompanyMembership.Role.OWNER,
-                ],
-            )
-            .values_list(
-                "company_id",
-                flat=True,
-            )
-        )
-
-        assigned_branch_ids = (
-            BranchMembership.objects
-            .filter(
-                company_membership__in=user_memberships,
-                is_active=True,
-                is_default=True,
-                branch__is_active=True,
-            )
-            .values_list(
-                "branch_id",
-                flat=True,
-            )
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(
+            self.request.user
         )
 
         queryset = (
             Branch.objects
             .filter(
                 Q(
-                    company_id__in=unrestricted_company_ids,
+                    company_id__in=owner_company_ids,
                 )
                 | Q(
                     id__in=assigned_branch_ids,
@@ -85,6 +60,7 @@ class BranchViewSet(
         company = serializer.validated_data["company"]
 
         self.ensure_company_manager(company)
+
         serializer.save()
 
     def perform_update(self, serializer):
@@ -106,6 +82,8 @@ class BranchMembershipViewSet(
     CompanyAccessMixin,
     ModelViewSet,
 ):
+    permission_classes = [IsAuthenticated]
+    
     def get_queryset(self):
         managed_company_ids = (
             CompanyMembership.objects

@@ -17,42 +17,12 @@ from .models import CashRegister, CashSession, CashSessionStatus, CashMovement, 
 from .serializers import CashRegisterSerializer, CashSessionSerializer, CashMovementSerializer, OpenCashSessionSerializer, CloseCashSessionSerializer, ManualCashMovementSerializer
 from .pagination import CashPagination
 
+from common.access import (
+    get_user_company_branch_scope,
+    validate_company_branch_access,
+)
+
 # Create your views here.
-
-def get_user_cash_scope(user):
-    memberships = CompanyMembership.objects.filter(user=user, is_active=True)
-    owner_company_ids = memberships.filter(role="OWNER").values_list("company_id", flat=True)
-
-    assigned_branch_ids = BranchMembership.objects.filter(
-        company_membership__user=user,
-        company_membership__is_active=True,
-        is_active=True,
-        branch__is_active=True,
-    ).values_list("branch_id", flat=True)
-
-    return owner_company_ids, assigned_branch_ids
-
-
-def validate_branch_access(user, company, branch):
-    membership = CompanyMembership.objects.filter(user=user, company=company, is_active=True).first()
-
-    if not membership:
-        raise PermissionDenied("No tienes acceso a esta empresa.")
-
-    if membership.role == "OWNER":
-        return membership
-
-    has_branch_access = BranchMembership.objects.filter(
-        company_membership=membership,
-        branch=branch,
-        is_active=True,
-        branch__is_active=True,
-    ).exists()
-
-    if not has_branch_access:
-        raise PermissionDenied("No tienes acceso a esta sucursal.")
-
-    return membership
 
 
 class CashRegisterViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixins.RetrieveModelMixin, mixins.UpdateModelMixin, GenericViewSet):
@@ -65,7 +35,7 @@ class CashRegisterViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixins
     pagination_class = CashPagination
 
     def get_queryset(self):
-        owner_company_ids, assigned_branch_ids = get_user_cash_scope(self.request.user)
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(self.request.user)
 
         queryset = CashRegister.objects.filter(
             Q(company_id__in=owner_company_ids) |
@@ -91,17 +61,21 @@ class CashRegisterViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixins
         company = serializer.validated_data["company"]
         branch = serializer.validated_data["branch"]
 
-        validate_branch_access(self.request.user, company, branch)
+        validate_company_branch_access(
+            self.request.user,
+            company.id,
+            branch.id,
+        )
 
         serializer.save()
 
     def perform_update(self, serializer):
         cash_register = self.get_object()
 
-        validate_branch_access(
+        validate_company_branch_access(
             self.request.user,
-            cash_register.company,
-            cash_register.branch,
+            cash_register.company_id,
+            cash_register.branch_id,
         )
 
         serializer.save(company=cash_register.company, branch=cash_register.branch)
@@ -116,7 +90,7 @@ class CashSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gener
     pagination_class = CashPagination
 
     def get_queryset(self):
-        owner_company_ids, assigned_branch_ids = get_user_cash_scope(self.request.user)
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(self.request.user)
 
         queryset = CashSession.objects.filter(
             Q(company_id__in=owner_company_ids) |
@@ -158,7 +132,11 @@ class CashSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gener
         opening_amount = serializer.validated_data["opening_amount"]
         notes = serializer.validated_data.get("notes", "")
 
-        validate_branch_access(request.user, company, branch)
+        validate_company_branch_access(
+            request.user,
+            company.id,
+            branch.id,
+        )
 
         with transaction.atomic():
             try:
@@ -210,10 +188,10 @@ class CashSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gener
             except CashSession.DoesNotExist:
                 raise ValidationError({ "detail": "La sesión de caja no existe o no tienes acceso a ella." })
 
-            validate_branch_access(
+            validate_company_branch_access(
                 request.user,
-                cash_session.company,
-                cash_session.branch,
+                cash_session.company_id,
+                cash_session.branch_id,
             )
 
             if cash_session.status != CashSessionStatus.OPEN:
@@ -294,7 +272,7 @@ class CashMovementViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gene
     pagination_class = CashPagination
 
     def get_queryset(self):
-        owner_company_ids, assigned_branch_ids = get_user_cash_scope(self.request.user)
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(self.request.user)
 
         queryset = CashMovement.objects.filter(
             Q(company_id__in=owner_company_ids) |
@@ -336,7 +314,11 @@ class CashMovementViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gene
         reference = serializer.validated_data.get("reference", "")
         notes = serializer.validated_data.get("notes", "")
 
-        validate_branch_access(request.user, cash_session.company, cash_session.branch)
+        validate_company_branch_access(
+            request.user,
+            cash_session.company_id,
+            cash_session.branch_id,
+        )
 
         with transaction.atomic():
             try:

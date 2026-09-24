@@ -5,7 +5,6 @@ from rest_framework.filters import (
     SearchFilter,
 )
 from companies.mixins import CompanyAccessMixin
-
 from .models import Brand, Category, Product, UnitOfMeasure
 from .serializers import (
     BrandDetailSerializer,
@@ -19,9 +18,7 @@ from .serializers import (
 )
 
 from .pagination import ProductPagination
-
 from decimal import Decimal
-
 from django.db.models import (
     DecimalField,
     OuterRef,
@@ -29,9 +26,9 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Coalesce
-
 from inventory.models import ProductStock
-
+from rest_framework.exceptions import ValidationError
+from common.access import validate_company_branch_access
 
 class CatalogBaseViewSet(
     CompanyAccessMixin,
@@ -101,17 +98,46 @@ class CatalogBaseViewSet(
 
 
 class CategoryViewSet(CatalogBaseViewSet):
+    pagination_class = ProductPagination
+    filter_backends = (
+        DjangoFilterBackend,
+        SearchFilter,
+        OrderingFilter,
+    )
+
+    filterset_fields = (
+        "parent",
+        "is_active",
+    )
+
+    search_fields = (
+        "name",
+        "description",
+        "parent__name",
+    )
+
+    ordering_fields = (
+        "name",
+        "created_at",
+        "updated_at",
+    )
+
+    ordering = ("name",)
+
     def get_queryset(self):
         queryset = self.get_base_queryset(
             Category
-        ).select_related("company", "parent")
+        ).select_related(
+            "company",
+            "parent",
+        )
 
         if self.action == "retrieve":
             queryset = queryset.prefetch_related(
                 "children"
             )
 
-        return queryset.order_by("name")
+        return queryset
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -121,12 +147,37 @@ class CategoryViewSet(CatalogBaseViewSet):
 
 
 class BrandViewSet(CatalogBaseViewSet):
+    pagination_class = ProductPagination
+
+    filter_backends = (
+        DjangoFilterBackend,
+        SearchFilter,
+        OrderingFilter,
+    )
+
+    filterset_fields = (
+        "is_active",
+    )
+
+    search_fields = (
+        "name",
+        "description",
+    )
+
+    ordering_fields = (
+        "name",
+        "created_at",
+        "updated_at",
+    )
+
+    ordering = ("name",)
+
     def get_queryset(self):
         return self.get_base_queryset(
             Brand
         ).select_related(
             "company"
-        ).order_by("name")
+        )
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -185,7 +236,7 @@ class ProductViewSet(CatalogBaseViewSet):
 
     def get_queryset(self):
         queryset = (
-            Product.objects
+            self.get_base_queryset(Product)
             .select_related(
                 "company",
                 "category",
@@ -194,22 +245,8 @@ class ProductViewSet(CatalogBaseViewSet):
             )
         )
 
-        company_id = (
-            self.request.query_params.get(
-                "company_id"
-            )
-        )
-
-        branch_id = (
-            self.request.query_params.get(
-                "branch_id"
-            )
-        )
-
-        if company_id:
-            queryset = queryset.filter(
-                company_id=company_id,
-            )
+        company_id = self.request.query_params.get("company_id")
+        branch_id = self.request.query_params.get("branch_id")
 
         stock_output_field = DecimalField(
             max_digits=14,
@@ -217,6 +254,20 @@ class ProductViewSet(CatalogBaseViewSet):
         )
 
         if branch_id:
+            if not company_id:
+                raise ValidationError({
+                    "company_id": (
+                        "Debes enviar company_id "
+                        "para consultar inventario por sucursal."
+                    )
+                })
+
+            validate_company_branch_access(
+                self.request.user,
+                company_id,
+                branch_id,
+            )
+
             stock_subquery = (
                 ProductStock.objects
                 .filter(
@@ -231,25 +282,19 @@ class ProductViewSet(CatalogBaseViewSet):
                 current_stock=Coalesce(
                     Subquery(
                         stock_subquery,
-                        output_field=(
-                            stock_output_field
-                        ),
+                        output_field=stock_output_field,
                     ),
                     Value(
                         Decimal("0.000"),
                     ),
-                    output_field=(
-                        stock_output_field
-                    ),
+                    output_field=stock_output_field,
                 )
             )
         else:
             queryset = queryset.annotate(
                 current_stock=Value(
                     Decimal("0.000"),
-                    output_field=(
-                        stock_output_field
-                    ),
+                    output_field=stock_output_field,
                 )
             )
 
@@ -260,3 +305,17 @@ class ProductViewSet(CatalogBaseViewSet):
             return ProductListSerializer
 
         return ProductDetailSerializer
+
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        branch_id = serializer.validated_data.get("branch_id")
+
+        if branch_id:
+            validate_company_branch_access(
+                self.request.user,
+                company.id,
+                branch_id,
+            )
+
+        super().perform_create(serializer)

@@ -24,6 +24,11 @@ from cash.models import CashMovement, CashMovementDirection, CashMovementType, C
 from cash.services import get_open_cash_session, create_cash_movement, reverse_cash_movement
 from .models import Purchase, PurchaseStatus, PurchasePaymentMethod
 
+from common.access import (
+    get_user_company_branch_scope,
+    validate_company_branch_access,
+)
+
 # Create your views here.
 
 class PurchasePagination(PageNumberPagination):
@@ -198,28 +203,9 @@ class PurchaseViewSet(
     def get_queryset(self):
         user = self.request.user
 
-        memberships = CompanyMembership.objects.filter(
-            user=user,
-            is_active=True,
+        owner_company_ids, assigned_branch_ids = get_user_company_branch_scope(
+            self.request.user
         )
-
-        allowed_company_ids = list(
-            memberships.values_list("company_id", flat=True)
-        )
-
-        owner_company_ids = [
-            membership.company_id
-            for membership in memberships
-            if membership.role == "OWNER"
-        ]
-
-        assigned_branch_ids = BranchMembership.objects.filter(
-            company_membership__user=user,
-            company_membership__is_active=True,
-            is_active=True,
-            branch__is_active=True,
-            branch__company_id__in=allowed_company_ids,
-        ).values_list("branch_id", flat=True)
 
         queryset = Purchase.objects.filter(
             Q(company_id__in=owner_company_ids)
@@ -239,20 +225,11 @@ class PurchaseViewSet(
         purchase_status = self.request.query_params.get("status")
         payment_method = self.request.query_params.get("payment_method")
 
-        if company_id:
-            queryset = queryset.filter(company_id=company_id)
-
-        if branch_id:
-            queryset = queryset.filter(branch_id=branch_id)
-
-        if supplier_id:
-            queryset = queryset.filter(supplier_id=supplier_id)
-
-        if purchase_status:
-            queryset = queryset.filter(status=purchase_status)
-
-        if payment_method:
-            queryset = queryset.filter(payment_method=payment_method)
+        if company_id: queryset = queryset.filter(company_id=company_id)
+        if branch_id: queryset = queryset.filter(branch_id=branch_id)
+        if supplier_id: queryset = queryset.filter(supplier_id=supplier_id)
+        if purchase_status: queryset = queryset.filter(status=purchase_status)
+        if payment_method: queryset = queryset.filter(payment_method=payment_method)
 
         return queryset
 
@@ -263,36 +240,11 @@ class PurchaseViewSet(
         company = serializer.validated_data["company"]
         branch = serializer.validated_data["branch"]
 
-        membership = CompanyMembership.objects.filter(
-            user=user,
-            company=company,
-            is_active=True,
-        ).first()
-
-        if not membership:
-            raise serializers.ValidationError({
-                "company_id": "No tienes acceso a esta empresa."
-            })
-
-        if branch.company_id != company.id:
-            raise serializers.ValidationError({
-                "branch_id": "La sucursal no pertenece a la empresa seleccionada."
-            })
-
-        is_owner = membership.role == "OWNER"
-
-        if not is_owner:
-            has_branch_access = BranchMembership.objects.filter(
-                company_membership=membership,
-                branch=branch,
-                is_active=True,
-                branch__is_active=True,
-            ).exists()
-
-            if not has_branch_access:
-                raise serializers.ValidationError({
-                    "branch_id": "No tienes acceso a esta sucursal."
-                })
+        validate_company_branch_access(
+            user,
+            company.id,
+            branch.id,
+        )
 
         purchase_number = self._generate_purchase_number(company)
 
