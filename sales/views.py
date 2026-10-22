@@ -1,7 +1,7 @@
 
 from datetime import datetime, time, timedelta
 from decimal import Decimal
-
+from django.http import HttpResponse
 from django.db.models import Sum
 from django.db.models.functions import (TruncDate, TruncMonth,)
 from django.utils import timezone
@@ -34,6 +34,8 @@ from common.access import (
     get_user_company_branch_scope,
     validate_company_branch_access,
 )
+from .services.sale_receipt import build_sale_receipt_pdf
+
 
 class SaleViewSet(
     mixins.ListModelMixin,
@@ -508,7 +510,7 @@ class SaleViewSet(
             }
         )
 
-    def checkout(self, request):
+    def checkout(self, request): 
         serializer = SaleCheckoutSerializer(
             data=request.data,
             context=self.get_serializer_context(),
@@ -534,6 +536,51 @@ class SaleViewSet(
             status=status.HTTP_201_CREATED,
         )
 
+    def receipt(self, request, pk=None):
+        try:
+            sale = (
+                self.get_queryset()
+                .prefetch_related(
+                    "items",
+                    "payments",
+                )
+                .get(pk=pk)
+            )
+        except Sale.DoesNotExist:
+            return Response(
+                {
+                    "detail": (
+                        "La venta no existe o no tienes "
+                        "acceso a ella."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if sale.status != SaleStatus.COMPLETED:
+            return Response(
+                {
+                    "detail": (
+                        "Solo se puede generar el comprobante "
+                        "de una venta completada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pdf = build_sale_receipt_pdf(sale)
+
+        filename = f"comprobante-{sale.sale_number}.pdf"
+
+        response = HttpResponse(
+            pdf,
+            content_type="application/pdf",
+        )
+
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+        return response
+    
 
     def cancel(self, request, pk=None):
         with transaction.atomic():
@@ -621,3 +668,5 @@ class SaleViewSet(
             ).data,
             status=status.HTTP_200_OK,
         )
+
+

@@ -24,6 +24,7 @@ class CompanyAdmin(admin.ModelAdmin):
         "currency",
         "is_active",
         "created_at",
+        "logo_url"
     )
 
     list_filter = (

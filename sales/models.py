@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -24,6 +25,12 @@ class PaymentMethod(models.TextChoices):
 
 
 class Sale(models.Model):
+
+    class DiscountType(models.TextChoices):
+        NONE = "NONE", "Sin descuento"
+        PERCENTAGE = "PERCENTAGE", "Porcentaje"
+        FIXED = "FIXED", "Monto fijo"
+
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -52,6 +59,17 @@ class Sale(models.Model):
 
     sale_number = models.CharField(
         max_length=30,
+    )
+
+    idempotency_key = models.UUIDField(
+        null=True,
+        blank=True,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=SaleStatus.choices,
+        default=SaleStatus.DRAFT,
     )
 
     status = models.CharField(
@@ -128,6 +146,24 @@ class Sale(models.Model):
         auto_now=True,
     )
 
+    cart_discount_type = models.CharField(
+        max_length=20,
+        choices=DiscountType.choices,
+        default=DiscountType.NONE,
+    )
+
+    cart_discount_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    cart_discount_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
     class Meta:
         db_table = "sales"
 
@@ -143,6 +179,13 @@ class Sale(models.Model):
                     "sale_number",
                 ),
                 name="uniq_sale_number_company",
+            ),
+            models.UniqueConstraint(
+                fields=(
+                    "company",
+                    "idempotency_key",
+                ),
+                name="uniq_sale_idempotency_company",
             ),
             models.CheckConstraint(
                 condition=Q(subtotal__gte=0),

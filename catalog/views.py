@@ -187,12 +187,41 @@ class BrandViewSet(CatalogBaseViewSet):
 
 
 class UnitOfMeasureViewSet(CatalogBaseViewSet):
+    pagination_class = ProductPagination
+
+    filter_backends = (
+        DjangoFilterBackend,
+        SearchFilter,
+        OrderingFilter,
+    )
+
+    filterset_fields = (
+        "unit_type",
+        "allows_decimal",
+        "is_active",
+    )
+
+    search_fields = (
+        "name",
+        "symbol",
+    )
+
+    ordering_fields = (
+        "name",
+        "symbol",
+        "unit_type",
+        "created_at",
+        "updated_at",
+    )
+
+    ordering = ("name",)
+
     def get_queryset(self):
         return self.get_base_queryset(
             UnitOfMeasure
         ).select_related(
             "company"
-        ).order_by("name")
+        )
 
     def get_serializer_class(self):
         if self.action == "list":

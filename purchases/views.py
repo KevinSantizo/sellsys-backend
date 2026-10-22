@@ -424,36 +424,56 @@ class PurchaseViewSet(
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            stock_rows = []
+            quantities_by_product = {}
+            products_by_id = {}
 
-            # Primero validamos que TODO el inventario pueda revertirse.
             for item in items:
-                try:
-                    product_stock = ProductStock.objects.select_for_update().get(
-                        company=purchase.company,
-                        branch=purchase.branch,
-                        product=item.product,
-                    )
-                except ProductStock.DoesNotExist:
+                quantities_by_product[item.product_id] = quantities_by_product.get(item.product_id,
+                                                                                   Decimal("0.000")) + item.quantity
+                products_by_id[item.product_id] = item.product
+
+            product_ids = list(quantities_by_product.keys())
+
+            stocks = (
+                ProductStock.objects
+                .select_for_update()
+                .filter(
+                    company=purchase.company,
+                    branch=purchase.branch,
+                    product_id__in=product_ids,
+                )
+                .select_related("product")
+            )
+
+            stock_map = {
+                stock.product_id: stock
+                for stock in stocks
+            }
+
+            for product_id, quantity in quantities_by_product.items():
+                product = products_by_id[product_id]
+                product_stock = stock_map.get(product_id)
+
+                if product_stock is None:
                     raise serializers.ValidationError({
-                        "detail": f'No existe inventario para el producto "{item.product.name}".'
+                        "detail": f'No existe inventario para el producto "{product.name}".'
                     })
 
-                if product_stock.quantity < item.quantity:
+                if product_stock.quantity < quantity:
                     raise serializers.ValidationError({
                         "detail": (
-                            f'No es posible cancelar la compra porque "{item.product.name}" '
+                            f'No es posible cancelar la compra porque "{product.name}" '
                             f"solo tiene {format_quantity(product_stock.quantity)} unidades disponibles "
-                            f"y se deben revertir {format_quantity(item.quantity)}."
+                            f"y se deben revertir {format_quantity(quantity)}."
                         )
                     })
 
-                stock_rows.append((item, product_stock))
+            for product_id, quantity in quantities_by_product.items():
+                product = products_by_id[product_id]
+                product_stock = stock_map[product_id]
 
-            # Revertimos el inventario.
-            for item, product_stock in stock_rows:
                 previous_stock = product_stock.quantity
-                new_stock = previous_stock - item.quantity
+                new_stock = previous_stock - quantity
 
                 product_stock.quantity = new_stock
                 product_stock.save(update_fields=["quantity", "updated_at"])
@@ -461,9 +481,9 @@ class PurchaseViewSet(
                 InventoryMovement.objects.create(
                     company=purchase.company,
                     branch=purchase.branch,
-                    product=item.product,
+                    product=product,
                     movement_type=InventoryMovementType.PURCHASE_REVERSAL,
-                    quantity=item.quantity,
+                    quantity=quantity,
                     previous_stock=previous_stock,
                     new_stock=new_stock,
                     reference=purchase.purchase_number,

@@ -297,9 +297,7 @@ class ProductDetailSerializer(
 
     category_id = serializers.PrimaryKeyRelatedField(
         source="category",
-        queryset=Category.objects.filter(
-            is_active=True,
-        ),
+        queryset=Category.objects.all(),
         required=False,
         allow_null=True,
         write_only=True,
@@ -311,9 +309,7 @@ class ProductDetailSerializer(
 
     brand_id = serializers.PrimaryKeyRelatedField(
         source="brand",
-        queryset=Brand.objects.filter(
-            is_active=True,
-        ),
+        queryset=Brand.objects.all(),
         required=False,
         allow_null=True,
         write_only=True,
@@ -325,6 +321,28 @@ class ProductDetailSerializer(
 
     base_unit_id = serializers.PrimaryKeyRelatedField(
         source="base_unit",
+        queryset=UnitOfMeasure.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
+
+    base_unit = UnitOfMeasureListSerializer( read_only=True, )
+
+    content_unit_id = serializers.PrimaryKeyRelatedField(
+        source="content_unit",
+        queryset=UnitOfMeasure.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
+
+    content_unit = UnitOfMeasureListSerializer(
+        read_only=True,
+    )
+
+    package_unit_id = serializers.PrimaryKeyRelatedField(
+        source="package_unit",
         queryset=UnitOfMeasure.objects.filter(
             is_active=True,
         ),
@@ -333,7 +351,7 @@ class ProductDetailSerializer(
         write_only=True,
     )
 
-    base_unit = UnitOfMeasureListSerializer(
+    package_unit = UnitOfMeasureListSerializer(
         read_only=True,
     )
 
@@ -357,6 +375,7 @@ class ProductDetailSerializer(
         default=Decimal("0.000"),
     )
 
+
     class Meta:
         model = Product
         fields = (
@@ -375,7 +394,15 @@ class ProductDetailSerializer(
             "brand",
             "base_unit_id",
             "base_unit",
+            "base_unit_id",
+            "base_unit",
             "cost_price",
+            "package_quantity",
+            "package_unit_id",
+            "package_unit",
+            "content_quantity",
+            "content_unit_id",
+            "content_unit",
             "sale_price",
             "track_inventory",
             "is_active",
@@ -392,7 +419,10 @@ class ProductDetailSerializer(
             "category",
             "brand",
             "base_unit",
+            "content_unit",
             "created_at",
+            "package_unit",
+            "content_unit",
             "updated_at",
         )
 
@@ -453,6 +483,34 @@ class ProductDetailSerializer(
             else None,
         )
 
+        package_quantity = attrs.get(
+            "package_quantity",
+            self.instance.package_quantity
+            if self.instance
+            else None,
+        )
+
+        package_unit = attrs.get(
+            "package_unit",
+            self.instance.package_unit
+            if self.instance
+            else None,
+        )
+
+        content_quantity = attrs.get(
+            "content_quantity",
+            self.instance.content_quantity
+            if self.instance
+            else None,
+        )
+
+        content_unit = attrs.get(
+            "content_unit",
+            self.instance.content_unit
+            if self.instance
+            else None,
+        )
+
         product_type = attrs.get(
             "product_type",
             self.instance.product_type
@@ -476,37 +534,87 @@ class ProductDetailSerializer(
 
         errors = {}
 
-        if (
-            category
-            and category.company_id != company.id
-        ):
+        if category and category.company_id != company.id:
             errors["category_id"] = (
                 "La categoría no pertenece a "
                 "la empresa seleccionada."
             )
 
-        if (
-            brand
-            and brand.company_id != company.id
-        ):
+        if category and not category.is_active:
+            errors["category_id"] = (
+                "La categoría seleccionada no está activa."
+            )
+
+        if brand and not brand.is_active:
+            errors["brand_id"] = (
+                "La marca seleccionada no está activa."
+            )
+
+        if brand and brand.company_id != company.id:
             errors["brand_id"] = (
                 "La marca no pertenece a "
                 "la empresa seleccionada."
             )
 
-        if (
-            base_unit
-            and base_unit.company_id != company.id
-        ):
+        if base_unit and not base_unit.is_active:
+            errors["base_unit_id"] = (
+                "La unidad de inventario seleccionada no está activa."
+            )
+
+        if base_unit and base_unit.company_id != company.id:
             errors["base_unit_id"] = (
                 "La unidad de medida no pertenece a "
                 "la empresa seleccionada."
             )
 
-        if (
-            product_type == Product.ProductType.PRODUCT
-            and base_unit is None
-        ):
+        if package_unit and package_unit.company_id != company.id:
+            errors["package_unit_id"] = (
+                "La unidad interna no pertenece a "
+                "la empresa seleccionada."
+            )
+
+        if package_quantity is not None  and package_quantity <= 0:
+            errors["package_quantity"] = (
+                "La cantidad por empaque debe ser mayor que cero."
+            )
+
+        if package_quantity is None  and package_unit is not None:
+            errors["package_quantity"] = (
+                "Debes indicar cuántas unidades contiene el empaque."
+            )
+
+        if package_quantity is not None and package_unit is None:
+            errors["package_unit_id"] = (
+                "Debes seleccionar la unidad interna."
+            )
+
+        if content_unit and not content_unit.is_active:
+            errors["content_unit_id"] = (
+                "La unidad de la presentación seleccionada no está activa."
+            )
+
+        if content_unit and content_unit.company_id != company.id:
+            errors["content_unit_id"] = (
+                "La unidad de contenido no pertenece a "
+                "la empresa seleccionada."
+            )
+
+        if content_quantity is not None and content_quantity <= 0:
+            errors["content_quantity"] = (
+                "El contenido debe ser mayor que cero."
+            )
+
+        if content_quantity is None  and content_unit is not None:
+            errors["content_quantity"] = (
+                "Debes indicar la cantidad de contenido."
+            )
+
+        if content_quantity is not None and content_unit is None:
+            errors["content_unit_id"] = (
+                "Debes seleccionar la unidad de contenido."
+            )
+
+        if product_type == Product.ProductType.PRODUCT and base_unit is None:
             errors["base_unit_id"] = (
                 "Los productos físicos deben tener "
                 "una unidad de medida base."
@@ -568,10 +676,7 @@ class ProductDetailSerializer(
                 True,
             )
 
-            if (
-                    product_type == Product.ProductType.PRODUCT
-                    and track_inventory
-            ):
+            if product_type == Product.ProductType.PRODUCT and track_inventory:
                 if not branch_id:
                     errors["branch_id"] = (
                         "Debes seleccionar una sucursal "
@@ -581,6 +686,16 @@ class ProductDetailSerializer(
                 if initial_stock < 0:
                     errors["initial_stock"] = (
                         "El stock inicial no puede ser negativo."
+                    )
+
+                if (
+                        base_unit
+                        and not base_unit.allows_decimal
+                        and initial_stock != initial_stock.to_integral_value()
+                ):
+                    errors["initial_stock"] = (
+                        f"La unidad {base_unit.name} no permite "
+                        "cantidades decimales."
                     )
 
                 if branch_id:

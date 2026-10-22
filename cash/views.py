@@ -333,6 +333,15 @@ class CashMovementViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gene
             if cash_session.status != CashSessionStatus.OPEN:
                 raise ValidationError({"cash_session_id": "La sesión de caja debe estar abierta."})
 
+            if cash_session.cash_register.company_id != cash_session.company_id:
+                raise ValidationError({"cash_session_id": "La caja no pertenece a la empresa de la sesión."})
+
+            if cash_session.cash_register.branch_id != cash_session.branch_id:
+                raise ValidationError({"cash_session_id": "La caja no pertenece a la sucursal de la sesión."})
+
+            if not cash_session.cash_register.is_active:
+                raise ValidationError({"cash_session_id": "La caja seleccionada no está activa."})
+
             movement_type = CashMovementType.MANUAL_IN if direction == CashMovementDirection.IN else CashMovementType.MANUAL_OUT
 
             movement = CashMovement.objects.create(

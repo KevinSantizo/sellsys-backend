@@ -249,6 +249,36 @@ class CompanyMembershipViewSet(
 
         return request_membership
 
+
+    def _ensure_company_keeps_owner(self, membership, new_role=None, new_is_active=None):
+        if membership.role != CompanyMembership.Role.OWNER:
+            return
+
+        if not membership.is_active:
+            return
+
+        resulting_role = new_role if new_role is not None else membership.role
+        resulting_is_active = new_is_active if new_is_active is not None else membership.is_active
+
+        keeps_owner = (
+                resulting_role == CompanyMembership.Role.OWNER
+                and resulting_is_active
+        )
+
+        if keeps_owner:
+            return
+
+        active_owner_count = CompanyMembership.objects.filter(
+            company=membership.company,
+            role=CompanyMembership.Role.OWNER,
+            is_active=True,
+        ).count()
+
+        if active_owner_count <= 1:
+            raise PermissionDenied(
+                "La empresa debe conservar al menos un propietario activo."
+            )
+
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
         role = serializer.validated_data["role"]
@@ -263,10 +293,8 @@ class CompanyMembershipViewSet(
     def perform_update(self, serializer):
         instance = serializer.instance
 
-        new_role = serializer.validated_data.get(
-            "role",
-            instance.role,
-        )
+        new_role = serializer.validated_data.get("role", instance.role)
+        new_is_active = serializer.validated_data.get("is_active", instance.is_active)
 
         self._ensure_can_manage_membership(
             instance.company,
@@ -274,15 +302,34 @@ class CompanyMembershipViewSet(
             new_role=new_role,
         )
 
-        serializer.save(
-            company=instance.company,
+        self._ensure_company_keeps_owner(
+            instance,
+            new_role=new_role,
+            new_is_active=new_is_active,
         )
+
+        serializer.save(company=instance.company, user=instance.user)
 
     def perform_destroy(self, instance):
         self._ensure_can_manage_membership(
             instance.company,
             target_membership=instance,
         )
+
+        if (
+                instance.role == CompanyMembership.Role.OWNER
+                and instance.is_active
+        ):
+            active_owner_count = CompanyMembership.objects.filter(
+                company=instance.company,
+                role=CompanyMembership.Role.OWNER,
+                is_active=True,
+            ).count()
+
+            if active_owner_count <= 1:
+                raise PermissionDenied(
+                    "No puedes eliminar al último propietario activo de la empresa."
+                )
 
         instance.delete()
 
@@ -317,11 +364,11 @@ class CompanySettingsViewSet(
         serializer.save()
 
     def perform_update(self, serializer):
-        self.ensure_company_manager(
-            serializer.instance.company
-        )
+        instance = serializer.instance
 
-        serializer.save()
+        self.ensure_company_manager(instance.company)
+
+        serializer.save(company=instance.company)
 
     def perform_destroy(self, instance):
         self.ensure_company_manager(
@@ -405,11 +452,11 @@ class CompanyModuleViewSet(
         serializer.save()
 
     def perform_update(self, serializer):
-        self.ensure_company_manager(
-            serializer.instance.company
-        )
+        instance = serializer.instance
 
-        serializer.save()
+        self.ensure_company_manager(instance.company)
+
+        serializer.save(company=instance.company, module=instance.module)
 
     def perform_destroy(self, instance):
         self.ensure_company_manager(

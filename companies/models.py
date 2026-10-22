@@ -79,6 +79,12 @@ class Company(BaseModel):
         default="America/Guatemala",
     )
 
+    logo_url = models.URLField(
+        max_length=1500,
+        blank=True,
+        null=True,
+    )
+
     is_active = models.BooleanField(default=True)
 
     class Meta:

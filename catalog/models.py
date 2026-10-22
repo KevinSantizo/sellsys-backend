@@ -203,6 +203,34 @@ class Product(BaseModel):
         default=ProductType.PRODUCT,
     )
 
+    content_quantity = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+
+    content_unit = models.ForeignKey(
+        UnitOfMeasure,
+        on_delete=models.PROTECT,
+        related_name="products_by_content_unit",
+        null=True,
+        blank=True,
+    )
+
+    package_quantity = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+    )
+
+    package_unit = models.ForeignKey(
+        UnitOfMeasure,
+        on_delete=models.PROTECT,
+        related_name="products_by_package_unit",
+        null=True,
+        blank=True,
+    )
+
     cost_price = models.DecimalField(
         max_digits=14,
         decimal_places=2,

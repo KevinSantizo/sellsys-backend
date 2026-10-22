@@ -1,13 +1,13 @@
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
 from rest_framework import serializers
  
 from catalog.models import Product
-from companies.models import Company
+from companies.models import Company, CompanySettings
 
 from cash.models import CashMovementDirection, CashMovementType, CashMovementSource
 from cash.services import get_open_cash_session, create_cash_movement
@@ -185,6 +185,11 @@ class SaleDetailSerializer(
         read_only=True,
     )
 
+    cart_discount_type_display = serializers.CharField(
+        source="get_cart_discount_type_display",
+        read_only=True,
+    )
+
     created_by_name = serializers.SerializerMethodField()
 
     items = SaleItemSerializer(
@@ -213,6 +218,10 @@ class SaleDetailSerializer(
             "customer_tax_id",
             "subtotal",
             "discount_total",
+            "cart_discount_type",
+            "cart_discount_type_display",
+            "cart_discount_value",
+            "cart_discount_amount",
             "tax_total",
             "total",
             "amount_received",
@@ -321,6 +330,8 @@ class SaleCheckoutSerializer(serializers.Serializer,):
     notes = serializers.CharField(required=False, allow_blank=True, default="",)
     items = SaleItemInputSerializer(many=True, allow_empty=False,)
     payments = PaymentInputSerializer(many=True, allow_empty=False,)
+    cart_discount_type = serializers.ChoiceField( choices= Sale.DiscountType.choices, required=False, default=Sale.DiscountType.NONE, )
+    cart_discount_value = serializers.DecimalField( max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, default=Decimal("0.00"), )
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -334,18 +345,49 @@ class SaleCheckoutSerializer(serializers.Serializer,):
             company_id,
             branch_id,
         )
-        
+
         company = membership.company
         item_data = attrs["items"]
 
+        raw_idempotency_key = request.headers.get("Idempotency-Key")
+
+        if not raw_idempotency_key:
+            raise serializers.ValidationError({
+                "idempotency_key": "Debes enviar el encabezado Idempotency-Key."
+            })
+
+        try:
+            idempotency_key = uuid.UUID(raw_idempotency_key)
+        except (ValueError, TypeError, AttributeError):
+            raise serializers.ValidationError({
+                "idempotency_key": "El Idempotency-Key debe ser un UUID válido."
+            })
+
+        existing_sale = Sale.objects.filter(
+            company=company,
+            idempotency_key=idempotency_key,
+        ).first()
+
+        if existing_sale:
+            if existing_sale.branch_id != branch.id:
+                raise serializers.ValidationError({
+                    "idempotency_key": "El Idempotency-Key ya fue utilizado en otra sucursal."
+                })
+
+            attrs["idempotency_key"] = idempotency_key
+            attrs["existing_sale"] = existing_sale
+
+            return attrs
+
+        attrs["idempotency_key"] = idempotency_key
+
+        company_settings = CompanySettings.objects.filter(company=company).first()
         product_ids = [
             item["product_id"]
             for item in item_data
         ]
 
-        if len(product_ids) != len(
-            set(product_ids)
-        ):
+        if len(product_ids) != len(set(product_ids)):
             raise serializers.ValidationError({
                 "items": (
                     "No debes enviar el mismo "
@@ -385,46 +427,115 @@ class SaleCheckoutSerializer(serializers.Serializer,):
         calculated_items = []
 
         subtotal = Decimal("0.00")
-        discount_total = Decimal("0.00")
-        total = Decimal("0.00")
+        line_discount_total = Decimal("0.00")
+        subtotal_after_line_discounts = Decimal("0.00")
 
         for item in item_data:
             product = product_map[item["product_id"]]
             quantity = item["quantity"]
-            discount_percent = item.get("discount_percent", Decimal("0.00"),)
+
+            if (
+                    product.base_unit
+                    and not product.base_unit.allows_decimal
+                    and quantity != quantity.to_integral_value()
+            ):
+                raise serializers.ValidationError({
+                    "items": (
+                        f'El producto "{product.name}" '
+                        "no permite cantidades decimales."
+                    )
+                })
+
+            discount_percent = item.get("discount_percent", Decimal("0.00"))
             unit_price = quantize_money(product.sale_price)
             line_subtotal = quantize_money(quantity * unit_price)
-            discount_amount = quantize_money(line_subtotal * discount_percent / Decimal("100") )
+            discount_amount = quantize_money(line_subtotal * discount_percent / Decimal("100"))
             line_total = quantize_money(line_subtotal - discount_amount)
+
             subtotal += line_subtotal
-            discount_total += (discount_amount)
-            total += line_total
+            line_discount_total += discount_amount
+            subtotal_after_line_discounts += line_total
+
             calculated_items.append({
                 "product": product,
                 "quantity": quantity,
                 "unit_price": unit_price,
-                "discount_percent": (
-                    discount_percent
-                ),
-                "discount_amount": (
-                    discount_amount
-                ),
-                "line_subtotal": (
-                    line_subtotal
-                ),
+                "discount_percent": discount_percent,
+                "discount_amount": discount_amount,
+                "line_subtotal": line_subtotal,
                 "line_total": line_total,
             })
 
         subtotal = quantize_money(subtotal)
+        line_discount_total = quantize_money(line_discount_total)
+        subtotal_after_line_discounts = quantize_money(subtotal_after_line_discounts)
 
-        discount_total = quantize_money(discount_total)
-        total = quantize_money(total)
+        cart_discount_type = attrs.get("cart_discount_type", Sale.DiscountType.NONE)
+        cart_discount_value = attrs.get("cart_discount_value", Decimal("0.00"))
+        cart_discount_amount = Decimal("0.00")
+
+        if cart_discount_type == Sale.DiscountType.PERCENTAGE:
+            if cart_discount_value > Decimal("100.00"):
+                raise serializers.ValidationError({
+                    "cart_discount_value": (
+                        "El descuento porcentual "
+                        "no puede ser mayor al 100%."
+                    )
+                })
+
+            cart_discount_amount = subtotal_after_line_discounts * cart_discount_value / Decimal("100")
+
+        elif cart_discount_type == Sale.DiscountType.FIXED:
+            if cart_discount_value > subtotal_after_line_discounts:
+                raise serializers.ValidationError({
+                    "cart_discount_value": (
+                        "El descuento no puede ser mayor "
+                        "al total del carrito."
+                    )
+                })
+
+            cart_discount_amount = cart_discount_value
+
+        else:
+            cart_discount_type = Sale.DiscountType.NONE
+            cart_discount_value = Decimal("0.00")
+            cart_discount_amount = Decimal("0.00")
+
+        cart_discount_amount = quantize_money(cart_discount_amount)
+        discount_total = quantize_money(line_discount_total + cart_discount_amount)
+        total = quantize_money(subtotal_after_line_discounts - cart_discount_amount)
+
+        if company_settings:
+            if not company_settings.allow_manual_discounts and discount_total > Decimal("0.00"):
+                raise serializers.ValidationError({
+                    "discount": "Los descuentos manuales no están habilitados para esta empresa."
+                })
+
+            if company_settings.allow_manual_discounts and subtotal > Decimal("0.00"):
+                effective_discount_percent = discount_total * Decimal("100") / subtotal
+
+                if effective_discount_percent > company_settings.max_discount_percent:
+                    raise serializers.ValidationError({
+                        "discount": (
+                            "El descuento total supera el porcentaje máximo "
+                            "permitido para esta empresa."
+                        )
+                    })
+
+        if (
+                company_settings
+                and company_settings.require_customer_on_sale
+                and not attrs.get("customer_name", "").strip()
+        ):
+            raise serializers.ValidationError({
+                "customer_name": "Debes ingresar un cliente para registrar la venta."
+            })
+
         payment_total = quantize_money(
             sum(
                 (
                     payment["amount"]
-                    for payment
-                    in attrs["payments"]
+                    for payment in attrs["payments"]
                 ),
                 Decimal("0.00"),
             )
@@ -455,21 +566,31 @@ class SaleCheckoutSerializer(serializers.Serializer,):
 
         if cash_total > Decimal("0.00") and not attrs.get("cash_session_id"):
             raise serializers.ValidationError({
-                "cash_session_id": "Debes seleccionar una caja abierta para registrar pagos en efectivo."
+                "cash_session_id": (
+                    "Debes seleccionar una caja abierta "
+                    "para registrar pagos en efectivo."
+                )
             })
 
         if change_amount > cash_total:
             raise serializers.ValidationError({
-                "payments": "El cambio no puede ser mayor al monto recibido en efectivo."
+                "payments": (
+                    "El cambio no puede ser mayor "
+                    "al monto recibido en efectivo."
+                )
             })
 
         attrs["company"] = company
         attrs["branch"] = branch
-        attrs["calculated_items"] = (calculated_items)
+        attrs["calculated_items"] = calculated_items
         attrs["subtotal"] = subtotal
-        attrs["discount_total"] = (discount_total)
+        attrs["line_discount_total"] = line_discount_total
+        attrs["cart_discount_type"] = cart_discount_type
+        attrs["cart_discount_value"] = cart_discount_value
+        attrs["cart_discount_amount"] = cart_discount_amount
+        attrs["discount_total"] = discount_total
         attrs["total"] = total
-        attrs["payment_total"] = (payment_total)
+        attrs["payment_total"] = payment_total
         attrs["cash_total"] = cash_total
 
         return attrs
@@ -477,16 +598,61 @@ class SaleCheckoutSerializer(serializers.Serializer,):
     @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
-        company = validated_data[ "company" ]
-        branch = validated_data[ "branch"  ]
-        calculated_items = validated_data[ "calculated_items" ]
-        payments_data = validated_data[ "payments" ]
-        subtotal = validated_data[ "subtotal" ]
-        discount_total = validated_data[ "discount_total" ]
+
+        existing_sale = validated_data.get("existing_sale")
+
+        if existing_sale:
+            return existing_sale
+
+        company = validated_data["company"]
+        branch = validated_data["branch"]
+        calculated_items = validated_data["calculated_items"]
+        payments_data = validated_data["payments"]
+        subtotal = validated_data["subtotal"]
+        discount_total = validated_data["discount_total"]
+        cart_discount_type = validated_data["cart_discount_type"]
+        cart_discount_value = validated_data["cart_discount_value"]
+        cart_discount_amount = validated_data["cart_discount_amount"]
         total = validated_data["total"]
-        payment_total = validated_data[ "payment_total" ]
+        payment_total = validated_data["payment_total"]
         cash_total = validated_data["cash_total"]
-        change_amount = quantize_money( payment_total - total )
+        change_amount = quantize_money(payment_total - total)
+        idempotency_key = validated_data.get("idempotency_key")
+
+        try:
+            with transaction.atomic():
+                sale = Sale.objects.create(
+                    company=company,
+                    branch=branch,
+                    created_by=request.user,
+                    sale_number=generate_sale_number(),
+                    idempotency_key=idempotency_key,
+                    status=SaleStatus.COMPLETED,
+                    customer_name=validated_data.get("customer_name", "").strip(),
+                    customer_tax_id=validated_data.get("customer_tax_id", "").strip(),
+                    notes=validated_data.get("notes", "").strip(),
+                    subtotal=subtotal,
+                    discount_total=discount_total,
+                    cart_discount_type=cart_discount_type,
+                    cart_discount_value=cart_discount_value,
+                    cart_discount_amount=cart_discount_amount,
+                    tax_total=Decimal("0.00"),
+                    total=total,
+                    amount_received=payment_total,
+                    change_amount=change_amount,
+                    completed_at=timezone.now(),
+                )
+        except IntegrityError:
+            if idempotency_key:
+                existing_sale = Sale.objects.filter(
+                    company=company,
+                    idempotency_key=idempotency_key,
+                ).first()
+
+                if existing_sale:
+                    return existing_sale
+
+            raise
 
         cash_session = None
 
@@ -497,53 +663,17 @@ class SaleCheckoutSerializer(serializers.Serializer,):
                 branch=branch,
             )
 
-
         try:
-            locked_stocks = (
-                lock_and_validate_sale_stock(
-                    company=company,
-                    branch=branch,
-                    calculated_items=(
-                        calculated_items
-                    ),
-                )
+            locked_stocks = lock_and_validate_sale_stock(
+                company=company,
+                branch=branch,
+                calculated_items=calculated_items,
             )
         except InventoryStockError as error:
             raise serializers.ValidationError({
                 "items": str(error),
             }) from error
 
-
-        sale = Sale.objects.create(
-            company=company,
-            branch=branch,
-            created_by=request.user,
-            sale_number=(
-                generate_sale_number()
-            ),
-            status=SaleStatus.COMPLETED,
-            customer_name=validated_data.get(
-                "customer_name",
-                "",
-            ).strip(),
-            customer_tax_id=validated_data.get(
-                "customer_tax_id",
-                "",
-            ).strip(),
-            notes=validated_data.get(
-                "notes",
-                "",
-            ).strip(),
-            subtotal=subtotal,
-            discount_total=(
-                discount_total
-            ),
-            tax_total=Decimal("0.00"),
-            total=total,
-            amount_received=payment_total,
-            change_amount=change_amount,
-            completed_at=timezone.now(),
-        )
 
         sale_items = [
             SaleItem(
@@ -554,10 +684,10 @@ class SaleCheckoutSerializer(serializers.Serializer,):
                 quantity=item["quantity"],
                 unit_price=item["unit_price"],
                 unit_cost=item["product"].cost_price,
-                discount_percent=(item["discount_percent"]),
-                discount_amount=(item["discount_amount"]),
-                line_subtotal=(item["line_subtotal"]),
-                line_total=(item["line_total"]),
+                discount_percent=item["discount_percent"],
+                discount_amount=item["discount_amount"],
+                line_subtotal=item["line_subtotal"],
+                line_total=item["line_total"],
             )
             for item in calculated_items
         ]
@@ -573,10 +703,7 @@ class SaleCheckoutSerializer(serializers.Serializer,):
                 created_by=request.user,
                 method=payment["method"],
                 amount=payment["amount"],
-                reference=payment.get(
-                    "reference",
-                    "",
-                ),
+                reference=payment.get("reference", ""),
             )
             for payment in payments_data
         ]
@@ -610,6 +737,7 @@ class SaleCheckoutSerializer(serializers.Serializer,):
                 )
 
         return sale
+
 
     def to_representation(self, instance):
         return SaleDetailSerializer(

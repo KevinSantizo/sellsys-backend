@@ -23,6 +23,15 @@ def get_open_cash_session(*, cash_session_id, company, branch):
     if cash_session.branch_id != branch.id:
         raise ValidationError({ "cash_session_id": "La sesión de caja no pertenece a la sucursal." })
 
+    if cash_session.cash_register.company_id != company.id:
+        raise ValidationError({ "cash_session_id": "La caja no pertenece a la empresa." })
+
+    if cash_session.cash_register.branch_id != branch.id:
+        raise ValidationError({ "cash_session_id": "La caja no pertenece a la sucursal." })
+
+    if not cash_session.cash_register.is_active:
+        raise ValidationError({ "cash_session_id": "La caja seleccionada no está activa." })
+
     return cash_session
 
 
@@ -34,6 +43,15 @@ def create_cash_movement(*, cash_session, direction, movement_type, amount, sour
 
     if cash_session.status != CashSessionStatus.OPEN:
         raise ValidationError({ "cash_session_id": "La sesión de caja debe estar abierta." })
+
+    if cash_session.cash_register.company_id != cash_session.company_id:
+        raise ValidationError({"cash_session_id": "La caja no pertenece a la empresa de la sesión."})
+
+    if cash_session.cash_register.branch_id != cash_session.branch_id:
+        raise ValidationError({"cash_session_id": "La caja no pertenece a la sucursal de la sesión."})
+
+    if not cash_session.cash_register.is_active:
+        raise ValidationError({"cash_session_id": "La caja seleccionada no está activa."})
 
     existing_movement = CashMovement.objects.filter(
         source_type=source_type,
@@ -62,6 +80,24 @@ def create_cash_movement(*, cash_session, direction, movement_type, amount, sour
 def reverse_cash_movement(*, original_movement, cash_session, user, reference="", notes=""):
     if CashMovement.objects.filter(reversal_of=original_movement).exists():
         raise ValidationError({ "detail": "Este movimiento de caja ya fue revertido." })
+
+    if cash_session.status != CashSessionStatus.OPEN:
+        raise ValidationError({ "cash_session_id": "La sesión de caja debe estar abierta." })
+
+    if cash_session.company_id != original_movement.company_id:
+        raise ValidationError({ "cash_session_id": "La sesión de caja no pertenece a la empresa del movimiento." })
+
+    if cash_session.branch_id != original_movement.branch_id:
+        raise ValidationError({ "cash_session_id": "La sesión de caja no pertenece a la sucursal del movimiento." })
+
+    if cash_session.cash_register.company_id != cash_session.company_id:
+        raise ValidationError({ "cash_session_id": "La caja no pertenece a la empresa de la sesión." })
+
+    if cash_session.cash_register.branch_id != cash_session.branch_id:
+        raise ValidationError({ "cash_session_id": "La caja no pertenece a la sucursal de la sesión." })
+
+    if not cash_session.cash_register.is_active:
+        raise ValidationError({ "cash_session_id": "La caja seleccionada no está activa." })
 
     direction = "OUT" if original_movement.direction == "IN" else "IN"
 
