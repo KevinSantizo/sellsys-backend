@@ -544,14 +544,12 @@ class PurchaseSerializer(
             )
         )
 
-
-    def get_created_by_name( self, obj,):
+    def get_created_by_name(self, obj) -> str | None:
         if not obj.created_by:
             return None
 
         return (
-            obj.created_by.get_full_name()
-            or obj.created_by.email
+                obj.created_by.get_full_name().strip()
+                or obj.created_by.email
         )
-
 

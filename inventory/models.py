@@ -94,14 +94,6 @@ class ProductStock(models.Model):
                 fields=(
                     "company",
                     "branch",
-                    "product",
-                ),
-                name="product_stock_lookup_idx",
-            ),
-            models.Index(
-                fields=(
-                    "company",
-                    "branch",
                 ),
                 name="product_stock_branch_idx",
             ),
@@ -272,12 +264,6 @@ class InventoryMovement(models.Model):
                     "created_at",
                 ),
                 name="inventory_movement_type_idx",
-            ),
-            models.Index(
-                fields=(
-                    "sale",
-                ),
-                name="inventory_movement_sale_idx",
             ),
         ]
 

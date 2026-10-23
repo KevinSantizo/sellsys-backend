@@ -109,6 +109,15 @@ class CompanyViewSet(
             is_main=True,
         )
 
+        for module in Module.objects.filter(
+                is_active=True,
+        ):
+            CompanyModule.objects.create(
+                company=company,
+                module=module,
+                enabled=module.default_enabled,
+            )
+
     def perform_update(self, serializer):
         self.ensure_company_manager(
             serializer.instance
@@ -128,6 +137,8 @@ class CompanyMembershipViewSet(
     permission_classes = [ IsAuthenticated ]
 
     def get_queryset(self):
+        if self.should_return_empty_queryset():
+            return CompanyMembership.objects.none()
         managed_company_ids = (
             CompanyMembership.objects
             .filter(
@@ -341,6 +352,9 @@ class CompanySettingsViewSet(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        if self.should_return_empty_queryset():
+            return CompanySettings.objects.none()
+
         queryset = CompanySettings.objects.filter(
             company__memberships__user=self.request.user,
             company__memberships__is_active=True,
@@ -423,6 +437,10 @@ class CompanyModuleViewSet(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+
+        if self.should_return_empty_queryset():
+            return CompanyModule.objects.none()
+
         queryset = CompanyModule.objects.filter(
             company__memberships__user=self.request.user,
             company__memberships__is_active=True,

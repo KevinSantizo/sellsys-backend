@@ -62,7 +62,7 @@ def get_allowed_branches(
     branch_ids = (
         BranchMembership.objects
         .filter(
-            user=user,
+            company_membership=membership,
             branch__company=company,
             branch__is_active=True,
             is_active=True,

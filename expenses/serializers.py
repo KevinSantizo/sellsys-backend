@@ -187,6 +187,32 @@ class ExpenseSerializer(
     ):
         instance = self.instance
 
+        if instance:
+            if (
+                    "company" in attrs
+                    and attrs["company"].id
+                    != instance.company_id
+            ):
+                raise serializers.ValidationError({
+                    "company_id": (
+                        "No puedes cambiar la empresa "
+                        "de un gasto existente."
+                    )
+                })
+
+            if (
+                    "branch" in attrs
+                    and attrs["branch"].id
+                    != instance.branch_id
+            ):
+                raise serializers.ValidationError({
+                    "branch_id": (
+                        "No puedes cambiar la sucursal "
+                        "de un gasto existente."
+                    )
+                })
+
+
         company = (
             attrs.get("company")
             or (
@@ -271,14 +297,11 @@ class ExpenseSerializer(
 
         return attrs
 
-    def get_created_by_name(
-        self,
-        obj,
-    ):
+    def get_created_by_name(self, obj) -> str | None:
         if not obj.created_by:
             return None
 
         return (
-            obj.created_by.get_full_name()
-            or obj.created_by.email
+                obj.created_by.get_full_name().strip()
+                or obj.created_by.email
         )

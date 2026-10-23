@@ -37,8 +37,13 @@ class CatalogBaseViewSet(
     module_code = "CATALOG"
 
     def get_base_queryset(self, model):
+        if self.should_return_empty_queryset():
+            return model.objects.none()
+
         queryset = model.objects.filter(
-            company__memberships__user=self.request.user,
+            company__memberships__user=(
+                self.request.user
+            ),
             company__memberships__is_active=True,
             company__is_active=True,
             company__company_modules__module__code=(

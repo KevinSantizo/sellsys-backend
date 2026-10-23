@@ -232,6 +232,15 @@ class Sale(models.Model):
             models.Index(
                 fields=(
                     "company",
+                    "branch",
+                    "status",
+                    "completed_at",
+                ),
+                name="sale_completed_idx",
+            ),
+            models.Index(
+                fields=(
+                    "company",
                     "sale_number",
                 ),
                 name="sale_number_idx",

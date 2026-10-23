@@ -28,6 +28,9 @@ from common.access import (
     get_user_company_branch_scope,
     validate_company_branch_access,
 )
+from django.db.models import IntegerField, Max
+from django.db.models.functions import Cast, Substr
+
 
 # Create your views here.
 
@@ -270,25 +273,41 @@ class PurchaseViewSet(
             purchase_number=purchase.purchase_number,
         )
 
+    def _generate_purchase_number(
+            self,
+            company,
+    ):
+        Company.objects.select_for_update().only(
+            "id",
+        ).get(
+            pk=company.pk,
+        )
 
-    def _generate_purchase_number(self, company):
-        Company.objects.select_for_update().get(pk=company.pk)
+        result = (
+            Purchase.objects
+            .filter(
+                company=company,
+                purchase_number__startswith="COMP-",
+            )
+            .annotate(
+                sequence_number=Cast(
+                    Substr(
+                        "purchase_number",
+                        6,
+                    ),
+                    IntegerField(),
+                )
+            )
+            .aggregate(
+                max_number=Max(
+                    "sequence_number",
+                )
+            )
+        )
 
-        purchase_numbers = Purchase.objects.filter(
-            company=company,
-            purchase_number__startswith="COMP-",
-        ).values_list("purchase_number", flat=True)
+        highest_number = ( result["max_number"]or 0 )
 
-        highest_number = 0
-
-        for purchase_number in purchase_numbers:
-            try:
-                number = int(purchase_number.split("-")[-1])
-                highest_number = max(highest_number, number)
-            except (ValueError, IndexError):
-                continue
-
-        return f"COMP-{highest_number + 1:06d}"
+        return (f"COMP-{highest_number + 1:06d}")
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):

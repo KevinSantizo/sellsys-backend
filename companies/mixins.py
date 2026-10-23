@@ -9,7 +9,31 @@ from .models import (
 
 
 class CompanyAccessMixin:
+
+    def should_return_empty_queryset(self):
+        if getattr(
+                self,
+                "swagger_fake_view",
+                False,
+        ):
+            return True
+
+        user = getattr(
+            self.request,
+            "user",
+            None,
+        )
+
+        return not getattr(
+            user,
+            "is_authenticated",
+            False,
+        )
+
     def get_accessible_companies(self):
+        if self.should_return_empty_queryset():
+            return Company.objects.none()
+
         return Company.objects.filter(
             memberships__user=self.request.user,
             memberships__is_active=True,

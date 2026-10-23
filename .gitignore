@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+kenv/
+
+# Django local database
+db.sqlite3
+*.sqlite3
+
+# Generated static files
+staticfiles/
+
+# Generated OpenAPI schema
+schema.yml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

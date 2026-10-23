@@ -69,7 +69,7 @@ class CashMovementSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_created_by_name(self, obj):
+    def get_created_by_name(self, obj) -> str | None:
         if not obj.created_by:
             return None
 
@@ -96,14 +96,14 @@ class CashSessionSerializer(serializers.ModelSerializer):
         fields = ( "id", "company_id", "company_name", "branch_id", "branch_name", "cash_register_id", "cash_register_name", "cash_register_code", "status", "status_display", "opening_amount", "expected_amount", "counted_amount", "difference", "opened_by_name", "closed_by_name", "opened_at", "closed_at", "notes", "created_at", "updated_at", )
         read_only_fields = fields
 
-    def get_opened_by_name(self, obj):
+    def get_opened_by_name(self, obj) -> str | None:
         if not obj.opened_by:
             return None
 
         full_name = obj.opened_by.get_full_name().strip()
         return full_name or obj.opened_by.username
 
-    def get_closed_by_name(self, obj):
+    def get_closed_by_name(self, obj) -> str | None:
         if not obj.closed_by:
             return None
 

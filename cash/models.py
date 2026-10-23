@@ -240,17 +240,37 @@ class CashMovement(models.Model):
 
         indexes = [
             models.Index(
-                fields=( "company", "branch", "created_at", ),
+                fields=(
+                    "company",
+                    "branch",
+                    "created_at",
+                ),
                 name="cash_movement_branch_idx",
             ),
 
             models.Index(
-                fields=( "cash_session", "created_at", ),
+                fields=(
+                    "company",
+                    "branch",
+                    "direction",
+                    "created_at",
+                ),
+                name="cash_movement_direction_idx",
+            ),
+
+            models.Index(
+                fields=(
+                    "cash_session",
+                    "created_at",
+                ),
                 name="cash_movement_session_idx",
             ),
 
             models.Index(
-                fields=( "source_type", "source_id", ),
+                fields=(
+                    "source_type",
+                    "source_id",
+                ),
                 name="cash_movement_source_idx",
             ),
         ]

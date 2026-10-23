@@ -15,14 +15,58 @@ from .serializers import (
     UserDetailSerializer,
 )
 
+from drf_spectacular.utils import extend_schema
+from rest_framework.viewsets import GenericViewSet
 
-class AuthViewSet(ViewSet):
+from rest_framework import serializers
+from drf_spectacular.utils import (
+    extend_schema,
+    OpenApiParameter,
+    OpenApiTypes,
+)
+
+class RegisterResponseSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user = UserDetailSerializer()
+    company = CompanyDetailSerializer()
+
+
+class SessionMembershipResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    role = serializers.CharField()
+    role_display = serializers.CharField()
+
+
+class SessionContextResponseSerializer(serializers.Serializer):
+    company = CompanyListSerializer()
+    membership = SessionMembershipResponseSerializer()
+    branches = BranchListSerializer(many=True)
+    default_branch = BranchListSerializer(
+        allow_null=True,
+    )
+
+
+class AuthViewSet(GenericViewSet):
+    serializer_class = UserDetailSerializer
+
     def get_permissions(self):
         if self.action == "register":
             return [AllowAny()]
 
         return [IsAuthenticated()]
 
+    def get_serializer_class(self):
+        if self.action == "register":
+            return RegisterSerializer
+
+        return UserDetailSerializer
+
+    @extend_schema(
+        request=RegisterSerializer,
+        responses={
+            201: RegisterResponseSerializer,
+        },
+    )
     def register(self, request):
         serializer = RegisterSerializer(
             data=request.data,
@@ -47,15 +91,38 @@ class AuthViewSet(ViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @extend_schema(
+        responses={
+            200: UserDetailSerializer,
+        },
+    )
     def me(self, request):
         return Response(
             UserDetailSerializer(
                 request.user,
-            ).data,
+            ).data
         )
 
 
-class SessionContextViewSet(ViewSet):
+class SessionContextViewSet(GenericViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = SessionContextResponseSerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="company_id",
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="ID de la empresa para obtener el contexto de sesión.",
+            ),
+        ],
+        responses={
+            200: SessionContextResponseSerializer,
+        },
+    )
+
     def context(self, request):
         company_id = request.query_params.get(
             "company_id",

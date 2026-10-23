@@ -85,6 +85,10 @@ class BranchMembershipViewSet(
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+
+        if self.should_return_empty_queryset():
+            return BranchMembership.objects.none()
+
         managed_company_ids = (
             CompanyMembership.objects
             .filter(

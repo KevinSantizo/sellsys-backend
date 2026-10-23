@@ -29,6 +29,8 @@ from inventory.services import (
     lock_and_validate_sale_stock,
 )
 
+from drf_spectacular.utils import extend_schema_field
+
 MONEY_PLACES = Decimal("0.01")
 
 
@@ -57,7 +59,6 @@ class SaleItemSerializer(
     serializers.ModelSerializer,
 ):
     product_id = serializers.UUIDField(
-        source="product.id",
         read_only=True,
     )
 
@@ -152,18 +153,23 @@ class SaleListSerializer(
 
         read_only_fields = fields
 
-    def get_created_by_name(self, instance):
+    @extend_schema_field(
+        serializers.CharField(
+            allow_null=True,
+        )
+    )
+    def get_created_by_name(self, instance) -> str | None:
         user = instance.created_by
 
         if not user:
             return None
 
-        full_name = user.get_full_name()
+        full_name = user.get_full_name().strip()
 
         return (
-            full_name
-            or getattr(user, "email", "")
-            or str(user)
+                full_name
+                or getattr(user, "email", "")
+                or str(user)
         )
 
 
@@ -238,18 +244,23 @@ class SaleDetailSerializer(
 
         read_only_fields = fields
 
-    def get_created_by_name(self, instance):
+    @extend_schema_field(
+        serializers.CharField(
+            allow_null=True,
+        )
+    )
+    def get_created_by_name(self, instance) -> str | None:
         user = instance.created_by
 
         if not user:
             return None
 
-        full_name = user.get_full_name()
+        full_name = user.get_full_name().strip()
 
         return (
-            full_name
-            or getattr(user, "email", "")
-            or str(user)
+                full_name
+                or getattr(user, "email", "")
+                or str(user)
         )
 
 class SaleItemInputSerializer(

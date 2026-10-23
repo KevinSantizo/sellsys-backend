@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
@@ -5,12 +6,27 @@ from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularSwaggerView,
 )
-
+from django.db import connection
 
 def health_check(request):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception:
+        return JsonResponse(
+            {
+                "status": "error",
+                "application": "SellSys",
+                "database": "unavailable",
+            },
+            status=503,
+        )
+
     return JsonResponse({
         "status": "ok",
         "application": "SellSys",
+        "database": "ok",
     })
 
 
@@ -30,3 +46,19 @@ urlpatterns = [
     path("api/v1/cash/", include("cash.urls")),
     path("api/v1/reports/", include("reports.urls")),
 ]
+
+if settings.ENABLE_API_DOCS:
+    urlpatterns += [
+        path(
+            "api/schema/",
+            SpectacularAPIView.as_view(),
+            name="schema",
+        ),
+        path(
+            "api/docs/",
+            SpectacularSwaggerView.as_view(
+                url_name="schema"
+            ),
+            name="swagger-ui",
+        ),
+    ]
