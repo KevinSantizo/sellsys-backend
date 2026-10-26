@@ -288,12 +288,6 @@ class PurchaseViewSet(
         return (
             Purchase.objects
             .select_for_update()
-            .select_related(
-                "company",
-                "branch",
-                "supplier",
-                "created_by",
-            )
             .filter(
                 Q(
                     company_id__in=(
