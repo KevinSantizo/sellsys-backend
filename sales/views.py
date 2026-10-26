@@ -584,11 +584,40 @@ class SaleViewSet(
 
     def cancel(self, request, pk=None):
         with transaction.atomic():
+            owner_company_ids, assigned_branch_ids = (
+                get_user_company_branch_scope(
+                    request.user,
+                )
+            )
+
             try:
-                sale = self.get_queryset().select_for_update().get(pk=pk)
+                sale = (
+                    Sale.objects
+                    .select_for_update()
+                    .filter(
+                        Q(
+                            company_id__in=(
+                                owner_company_ids
+                            ),
+                        )
+                        | Q(
+                            branch_id__in=(
+                                assigned_branch_ids
+                            ),
+                        )
+                    )
+                    .get(
+                        pk=pk,
+                    )
+                )
             except Sale.DoesNotExist:
                 return Response(
-                    {"detail": "La venta no existe o no tienes acceso a ella."},
+                    {
+                        "detail": (
+                            "La venta no existe o "
+                            "no tienes acceso a ella."
+                        )
+                    },
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
