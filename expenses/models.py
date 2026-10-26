@@ -36,9 +36,7 @@ class ExpenseCategory(models.Model):
 
     class Meta:
         db_table = "expense_categories"
-
         ordering = ( "name", "id", )
-
         constraints = [
             models.UniqueConstraint(
                 fields=(
