@@ -227,8 +227,6 @@ SIMPLE_JWT = {
     "SIGNING_KEY": JWT_SIGNING_KEY,
 }
 
-
-
 DEFAULT_AUTO_FIELD = (
     "django.db.models.BigAutoField"
 )
