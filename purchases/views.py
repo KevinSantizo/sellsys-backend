@@ -273,6 +273,43 @@ class PurchaseViewSet(
             purchase_number=purchase.purchase_number,
         )
 
+    def _get_locked_purchase(
+            self,
+            request,
+            pk,
+    ):
+        owner_company_ids, assigned_branch_ids = (
+            get_user_company_branch_scope(
+                request.user,
+            )
+        )
+
+        return (
+            Purchase.objects
+            .select_for_update()
+            .select_related(
+                "company",
+                "branch",
+                "supplier",
+                "created_by",
+            )
+            .filter(
+                Q(
+                    company_id__in=(
+                        owner_company_ids
+                    ),
+                )
+                | Q(
+                    branch_id__in=(
+                        assigned_branch_ids
+                    ),
+                )
+            )
+            .get(
+                pk=pk,
+            )
+        )
+
     def _generate_purchase_number(
             self,
             company,
@@ -313,7 +350,10 @@ class PurchaseViewSet(
     def complete(self, request, pk=None):
         with transaction.atomic():
             try:
-                purchase = self.get_queryset().select_for_update().get(pk=pk)
+                purchase = self._get_locked_purchase(
+                    request,
+                    pk,
+                )
             except Purchase.DoesNotExist:
                 return Response(
                     {"detail": "La compra no existe o no tienes acceso a ella."},
@@ -406,7 +446,12 @@ class PurchaseViewSet(
     def cancel(self, request, pk=None):
         with transaction.atomic():
             try:
-                purchase = self.get_queryset().select_for_update().get(pk=pk)
+                purchase = (
+                    self._get_locked_purchase(
+                        request,
+                        pk,
+                    )
+                )
             except Purchase.DoesNotExist:
                 return Response(
                     {"detail": "La compra no existe o no tienes acceso a ella."},
