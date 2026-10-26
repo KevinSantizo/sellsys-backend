@@ -289,6 +289,44 @@ class ExpenseViewSet(
 
         return queryset.distinct()
 
+    def _get_locked_expense(
+            self,
+            request,
+            pk,
+    ):
+        owner_company_ids, assigned_branch_ids = (
+            get_user_company_branch_scope(
+                request.user,
+            )
+        )
+
+        return (
+            Expense.objects
+            .select_for_update()
+            .select_related(
+                "company",
+                "branch",
+                "category",
+                "supplier",
+                "created_by",
+            )
+            .filter(
+                Q(
+                    company_id__in=(
+                        owner_company_ids
+                    ),
+                )
+                | Q(
+                    branch_id__in=(
+                        assigned_branch_ids
+                    ),
+                )
+            )
+            .get(
+                pk=pk,
+            )
+        )
+
     def perform_create(self, serializer):
         user = self.request.user
         company = serializer.validated_data["company"]
@@ -327,16 +365,28 @@ class ExpenseViewSet(
             created_by=expense.created_by,
         )
 
-
     def complete(self, request, pk=None):
         with transaction.atomic():
             try:
-                expense = self.get_queryset().select_for_update().get(pk=pk)
+                expense = self._get_locked_expense(
+                    request,
+                    pk,
+                )
             except Expense.DoesNotExist:
-                raise NotFound("El gasto no existe o no tienes acceso a él.")
+                raise NotFound(
+                    "El gasto no existe o "
+                    "no tienes acceso a él."
+                )
 
             if expense.status != ExpenseStatus.DRAFT:
-                raise ValidationError({"detail": "Solo se pueden completar gastos en borrador."})
+                raise ValidationError(
+                    {
+                        "detail": (
+                            "Solo se pueden completar "
+                            "gastos en borrador."
+                        )
+                    }
+                )
 
             if expense.payment_method == ExpensePaymentMethod.CASH:
                 cash_session = get_open_cash_session(
@@ -365,9 +415,15 @@ class ExpenseViewSet(
     def cancel(self, request, pk=None):
         with transaction.atomic():
             try:
-                expense = self.get_queryset().select_for_update().get(pk=pk)
+                expense = self._get_locked_expense(
+                    request,
+                    pk,
+                )
             except Expense.DoesNotExist:
-                raise NotFound("El gasto no existe o no tienes acceso a él.")
+                raise NotFound(
+                    "El gasto no existe o "
+                    "no tienes acceso a él."
+                )
 
             if expense.status == ExpenseStatus.CANCELLED:
                 raise ValidationError({"detail": "El gasto ya está cancelado."})

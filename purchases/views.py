@@ -237,6 +237,7 @@ class PurchaseViewSet(
         return queryset
 
 
+
     @transaction.atomic
     def perform_create(self, serializer):
         user = self.request.user
@@ -356,13 +357,23 @@ class PurchaseViewSet(
                 )
             except Purchase.DoesNotExist:
                 return Response(
-                    {"detail": "La compra no existe o no tienes acceso a ella."},
+                    {
+                        "detail": (
+                            "La compra no existe o "
+                            "no tienes acceso a ella."
+                        )
+                    },
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
             if purchase.status != PurchaseStatus.DRAFT:
                 return Response(
-                    {"detail": "Solo las compras en borrador pueden completarse."},
+                    {
+                        "detail": (
+                            "Solo las compras en borrador "
+                            "pueden completarse."
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -446,15 +457,18 @@ class PurchaseViewSet(
     def cancel(self, request, pk=None):
         with transaction.atomic():
             try:
-                purchase = (
-                    self._get_locked_purchase(
-                        request,
-                        pk,
-                    )
+                purchase = self._get_locked_purchase(
+                    request,
+                    pk,
                 )
             except Purchase.DoesNotExist:
                 return Response(
-                    {"detail": "La compra no existe o no tienes acceso a ella."},
+                    {
+                        "detail": (
+                            "La compra no existe o "
+                            "no tienes acceso a ella."
+                        )
+                    },
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
