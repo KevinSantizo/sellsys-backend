@@ -263,6 +263,12 @@ class ProductListSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    content_unit_symbol = serializers.CharField(
+        source="content_unit.symbol",
+        read_only=True,
+        allow_null=True,
+    )
+
 
     class Meta:
         model = Product
@@ -282,6 +288,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "track_inventory",
             "current_stock",
             "is_active",
+            "content_quantity",
+            "content_unit_symbol",
         )
 
         read_only_fields = fields
