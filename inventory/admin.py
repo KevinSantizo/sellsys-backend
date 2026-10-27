@@ -308,10 +308,5 @@ class InventoryMovementAdmin(
         # existencias o completar una venta.
         return False
 
-    def has_delete_permission(
-        self,
-        request,
-        obj=None,
-    ):
-        # No se elimina el historial de inventario.
-        return False
+    def has_delete_permission(self, request, obj=None):
+        return True
