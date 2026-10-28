@@ -1,10 +1,8 @@
 from django.urls import path
-
 from .views import SaleViewSet
 
 
 app_name = "sales"
-
 
 sale_list_view = (SaleViewSet.as_view({ "get": "list", }))
 sale_checkout_view = (SaleViewSet.as_view({ "post": "checkout", }))
@@ -13,7 +11,6 @@ sale_weekly_summary_view = (SaleViewSet.as_view({ "get": "weekly_summary", }))
 sale_yearly_summary_view = (SaleViewSet.as_view({ "get": "yearly_summary", }))
 sale_cancel_view = SaleViewSet.as_view({ "post": "cancel" })
 sale_receipt_view = SaleViewSet.as_view({ "get": "receipt" })
-
 
 
 urlpatterns = [
