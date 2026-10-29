@@ -9,6 +9,7 @@ from rest_framework import (filters, mixins, viewsets,)
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
+from catalog.models import Product
 from companies.models import CompanyMembership
 from branches.models import BranchMembership
 from companies.models import Company
@@ -387,18 +388,34 @@ class PurchaseViewSet(
                         "items": f'El producto "{product.name}" no controla inventario.'
                     })
 
+                Product.objects.filter(
+                    pk=product.pk,
+                ).update(
+                    cost_price=item.unit_cost,
+                )
+
+                product.cost_price = item.unit_cost
+
                 product_stock, created = ProductStock.objects.select_for_update().get_or_create(
                     company=purchase.company,
                     branch=purchase.branch,
                     product=product,
-                    defaults={"quantity": Decimal("0.000")},
+                    defaults={
+                        "quantity": Decimal("0.000"),
+                    },
                 )
 
                 previous_stock = product_stock.quantity
                 new_stock = previous_stock + item.quantity
 
                 product_stock.quantity = new_stock
-                product_stock.save(update_fields=["quantity", "updated_at"])
+
+                product_stock.save(
+                    update_fields=[
+                        "quantity",
+                        "updated_at",
+                    ]
+                )
 
                 InventoryMovement.objects.create(
                     company=purchase.company,

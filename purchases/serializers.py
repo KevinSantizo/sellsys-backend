@@ -476,41 +476,40 @@ class PurchaseSerializer(
 
         return instance
 
-
     def _replace_items(
-        self,
-        purchase,
-        items_data,
+            self,
+            purchase,
+            items_data,
     ):
         purchase.items.all().delete()
 
         purchase_items = []
 
         for item_data in items_data:
-            quantity = item_data[
-                "quantity"
-            ]
+            product = item_data["product"]
+            quantity = item_data["quantity"]
+            unit_cost = item_data["unit_cost"]
 
-            unit_cost = item_data[
-                "unit_cost"
-            ]
-
-            subtotal = (
-                quantity
-                * unit_cost
-            )
+            subtotal = quantity * unit_cost
 
             purchase_items.append(
                 PurchaseItem(
                     purchase=purchase,
-                    product=item_data[
-                        "product"
-                    ],
+                    product=product,
                     quantity=quantity,
                     unit_cost=unit_cost,
                     subtotal=subtotal,
                 )
             )
+
+            if product.cost_price != unit_cost:
+                product.cost_price = unit_cost
+                product.save(
+                    update_fields=[
+                        "cost_price",
+                        "updated_at",
+                    ]
+                )
 
         PurchaseItem.objects.bulk_create(
             purchase_items

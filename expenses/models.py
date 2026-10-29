@@ -90,6 +90,8 @@ class Expense(models.Model):
         ExpenseCategory,
         on_delete=models.PROTECT,
         related_name="expenses",
+        null=True,
+        blank=True,
     )
 
     supplier = models.ForeignKey(

@@ -21,5 +21,4 @@ urlpatterns = [
     path("<uuid:pk>/", sale_detail_view, name="sale-detail",),
     path("<uuid:pk>/cancel/", sale_cancel_view, name="sale-cancel"),
     path("<uuid:pk>/receipt/", sale_receipt_view, name="sale-receipt"),
-
 ] 
