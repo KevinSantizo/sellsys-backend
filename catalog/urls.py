@@ -74,6 +74,14 @@ urlpatterns = [
     ),
 
     path(
+        "products/upload-image/",
+        views.ProductViewSet.as_view({
+            "post": "upload_image",
+        }),
+        name="product-upload-image",
+    ),
+
+    path(
         "products/<uuid:pk>/",
         views.ProductViewSet.as_view({
             "get": "retrieve",
@@ -83,4 +91,5 @@ urlpatterns = [
         }),
         name="product-detail",
     ),
+
 ]

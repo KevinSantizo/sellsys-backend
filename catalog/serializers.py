@@ -290,6 +290,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "is_active",
             "content_quantity",
             "content_unit_symbol",
+            "image_url",
+            "image_public_id",
         )
 
         read_only_fields = fields
@@ -402,8 +404,6 @@ class ProductDetailSerializer(
             "brand",
             "base_unit_id",
             "base_unit",
-            "base_unit_id",
-            "base_unit",
             "cost_price",
             "package_quantity",
             "package_unit_id",
@@ -418,6 +418,8 @@ class ProductDetailSerializer(
             "updated_at",
             "branch_id",
             "initial_stock",
+            "image_url",
+            "image_public_id",
         )
 
         read_only_fields = (

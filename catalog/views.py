@@ -30,6 +30,14 @@ from inventory.models import ProductStock
 from rest_framework.exceptions import ValidationError
 from common.access import validate_company_branch_access
 
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from catalog.services.cloudinary_service import (
+    upload_product_image,
+)
+
 class CatalogBaseViewSet(
     CompanyAccessMixin,
     ModelViewSet,
@@ -345,6 +353,22 @@ class ProductViewSet(CatalogBaseViewSet):
         company = serializer.validated_data["company"]
         branch_id = serializer.validated_data.get("branch_id")
 
+        print(
+            "IMAGE URL:",
+            serializer.validated_data.get("image_url"),
+        )
+
+        print(
+            "IMAGE PUBLIC ID:",
+            serializer.validated_data.get("image_public_id"),
+        )
+
+        print(
+            "VALIDATED DATA:",
+            serializer.validated_data,
+        )
+
+
         if branch_id:
             validate_company_branch_access(
                 self.request.user,
@@ -353,3 +377,62 @@ class ProductViewSet(CatalogBaseViewSet):
             )
 
         super().perform_create(serializer)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="upload-image",
+    )
+    def upload_image(
+            self,
+            request,
+    ):
+        image = request.FILES.get(
+            "image"
+        )
+
+        if not image:
+            return Response(
+                {
+                    "detail": (
+                        "Debes enviar una imagen."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not image.content_type.startswith(
+                "image/"
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "El archivo enviado "
+                        "no es una imagen válida."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = (
+                upload_product_image(
+                    image
+                )
+            )
+
+            return Response(
+                result,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception:
+            return Response(
+                {
+                    "detail": (
+                        "No se pudo subir "
+                        "la imagen."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

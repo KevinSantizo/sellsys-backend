@@ -39,6 +39,12 @@ class Branch(BaseModel):
         default=True,
     )
 
+    website_url = models.URLField(
+        max_length=1500,
+        blank=True,
+        null=True,
+    )
+
     class Meta:
         verbose_name = 'Branch'
         verbose_name_plural = 'Branches'

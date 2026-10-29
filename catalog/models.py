@@ -257,6 +257,18 @@ class Product(BaseModel):
         default=True,
     )
 
+    image_url = models.URLField(
+        max_length=1500,
+        blank=True,
+        null=True,
+    )
+
+    image_public_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
     class Meta:
         verbose_name = "Producto"
         verbose_name_plural = "Productos"
