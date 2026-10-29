@@ -164,7 +164,7 @@ CORS_ALLOWED_ORIGINS = env_list(
 
 CORS_ALLOW_HEADERS = (
     *default_headers,
-    "idempotency_key"
+    "idempotency-key",
 )
 
 CSRF_TRUSTED_ORIGINS = env_list(
