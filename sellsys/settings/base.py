@@ -3,6 +3,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
 
@@ -159,6 +160,11 @@ AUTH_USER_MODEL = "accounts.User"
 
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS"
+)
+
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "idempotency-key",
 )
 
 CSRF_TRUSTED_ORIGINS = env_list(
