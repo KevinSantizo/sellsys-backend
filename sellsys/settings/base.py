@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "expenses",
     "cash",
     "reports",
+    "suggestions",
     "rest_framework_simplejwt.token_blacklist",
 ]
 

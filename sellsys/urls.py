@@ -45,6 +45,7 @@ urlpatterns = [
     path("api/v1/expenses/", include("expenses.urls")),
     path("api/v1/cash/", include("cash.urls")),
     path("api/v1/reports/", include("reports.urls")),
+    path("api/v1/", include("suggestions.urls"),),
 ]
 
 if settings.ENABLE_API_DOCS:

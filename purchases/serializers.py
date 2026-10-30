@@ -90,6 +90,13 @@ class PurchaseItemSerializer(
         min_value=Decimal("0.00"),
     )
 
+    sale_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.00"),
+        write_only=True,
+    )
+
     subtotal = serializers.DecimalField(
         max_digits=14,
         decimal_places=2,
@@ -106,6 +113,7 @@ class PurchaseItemSerializer(
             "product_sku",
             "quantity",
             "unit_cost",
+            "sale_price",
             "subtotal",
             "created_at",
             "updated_at",
@@ -117,7 +125,6 @@ class PurchaseItemSerializer(
             "created_at",
             "updated_at",
         )
-
 
 class PurchaseSerializer(
     serializers.ModelSerializer
@@ -482,13 +489,13 @@ class PurchaseSerializer(
             items_data,
     ):
         purchase.items.all().delete()
-
         purchase_items = []
 
         for item_data in items_data:
             product = item_data["product"]
             quantity = item_data["quantity"]
             unit_cost = item_data["unit_cost"]
+            sale_price = item_data["sale_price"]
 
             subtotal = quantity * unit_cost
 
@@ -502,13 +509,27 @@ class PurchaseSerializer(
                 )
             )
 
+            update_fields = []
+
             if product.cost_price != unit_cost:
                 product.cost_price = unit_cost
+                update_fields.append(
+                    "cost_price"
+                )
+
+            if product.sale_price != sale_price:
+                product.sale_price = sale_price
+                update_fields.append(
+                    "sale_price"
+                )
+
+            if update_fields:
+                update_fields.append(
+                    "updated_at"
+                )
+
                 product.save(
-                    update_fields=[
-                        "cost_price",
-                        "updated_at",
-                    ]
+                    update_fields=update_fields
                 )
 
         PurchaseItem.objects.bulk_create(
