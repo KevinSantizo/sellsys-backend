@@ -388,7 +388,6 @@ def build_sale_receipt_pdf(
         logo_top_y,
         width=24 * mm,
     )
-
     if logo_height:
         y = (
                 logo_top_y
