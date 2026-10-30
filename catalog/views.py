@@ -20,6 +20,7 @@ from .serializers import (
 from .pagination import ProductPagination
 from decimal import Decimal
 from django.db.models import (
+    DateField,
     DecimalField,
     OuterRef,
     Subquery,
@@ -36,6 +37,11 @@ from rest_framework.response import Response
 
 from catalog.services.cloudinary_service import (
     upload_product_image,
+)
+
+from inventory.models import (
+    InventoryLot,
+    ProductStock,
 )
 
 class CatalogBaseViewSet(
@@ -299,8 +305,8 @@ class ProductViewSet(CatalogBaseViewSet):
             if not company_id:
                 raise ValidationError({
                     "company_id": (
-                        "Debes enviar company_id "
-                        "para consultar inventario por sucursal."
+                        "Debes enviar company_id para "
+                        "consultar inventario por sucursal."
                     )
                 })
 
@@ -320,6 +326,23 @@ class ProductViewSet(CatalogBaseViewSet):
                 .values("quantity")[:1]
             )
 
+            expiration_subquery = (
+                InventoryLot.objects
+                .filter(
+                    company_id=company_id,
+                    branch_id=branch_id,
+                    product_id=OuterRef("pk"),
+                    quantity_available__gt=0,
+                    expiration_date__isnull=False,
+                )
+                .order_by(
+                    "expiration_date",
+                )
+                .values(
+                    "expiration_date",
+                )[:1]
+            )
+
             queryset = queryset.annotate(
                 current_stock=Coalesce(
                     Subquery(
@@ -330,14 +353,24 @@ class ProductViewSet(CatalogBaseViewSet):
                         Decimal("0.000"),
                     ),
                     output_field=stock_output_field,
-                )
+                ),
+
+                next_expiration_date=Subquery(
+                    expiration_subquery,
+                    output_field=DateField(),
+                ),
             )
         else:
             queryset = queryset.annotate(
                 current_stock=Value(
                     Decimal("0.000"),
                     output_field=stock_output_field,
-                )
+                ),
+
+                next_expiration_date=Value(
+                    None,
+                    output_field=DateField(),
+                ),
             )
 
         return queryset

@@ -128,6 +128,7 @@ class PurchaseTests(TestCase):
         self,
         quantity="2.000",
         unit_cost="25.00",
+        sale_price="30.00",
         product=None,
         supplier=None,
         branch=None,
@@ -151,6 +152,7 @@ class PurchaseTests(TestCase):
                     "product_id": str(product.id),
                     "quantity": quantity,
                     "unit_cost": unit_cost,
+                    "sale_price": sale_price,
                 },
             ],
         }
@@ -327,6 +329,7 @@ class PurchaseTests(TestCase):
             "product_id": str(self.product.id),
             "quantity": "1.000",
             "unit_cost": "20.00",
+            "sale_price": "30.00",
         })
 
         serializer = PurchaseSerializer(

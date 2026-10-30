@@ -4,9 +4,44 @@ from django.db import transaction
 from .models import (
     InventoryMovement,
     InventoryMovementType,
-    ProductStock,
+    ProductStock, InventoryLot,
+    InventoryLotSaleAllocation
 )
 
+@admin.register(InventoryLotSaleAllocation)
+class InventoryLotSaleAllocationAdmin(
+    admin.ModelAdmin
+):
+    list_display = (
+        "sale",
+        "product",
+        "inventory_lot",
+        "quantity",
+        "created_at",
+    )
+
+    list_filter = (
+        "product",
+        "created_at",
+    )
+
+    search_fields = (
+        "sale__sale_number",
+        "product__name",
+        "product__sku",
+        "inventory_lot__lot_number",
+    )
+
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+    )
+
+    autocomplete_fields = (
+        "sale",
+        "product",
+        "inventory_lot",
+    )
 
 @admin.register(ProductStock)
 class ProductStockAdmin(admin.ModelAdmin):
@@ -310,3 +345,35 @@ class InventoryMovementAdmin(
 
     def has_delete_permission(self, request, obj=None):
         return True
+
+
+@admin.register(InventoryLot)
+class InventoryLotAdmin(admin.ModelAdmin):
+    list_display = (
+        "product",
+        "company",
+        "branch",
+        "lot_number",
+        "quantity_initial",
+        "quantity_available",
+        "received_at",
+        "expiration_date",
+    )
+
+    list_filter = (
+        "company",
+        "branch",
+        "expiration_date",
+        "received_at",
+    )
+
+    search_fields = (
+        "product__name",
+        "product__sku",
+        "lot_number",
+    )
+
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+    )

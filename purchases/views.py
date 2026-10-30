@@ -20,7 +20,7 @@ from rest_framework.pagination import PageNumberPagination
 from .serializers import PurchaseSerializer
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from inventory.models import InventoryMovement, InventoryMovementType, ProductStock
+from inventory.models import InventoryMovement, InventoryMovementType, ProductStock, InventoryLot
 from cash.models import CashMovement, CashMovementDirection, CashMovementType, CashMovementSource, CashSessionStatus
 from cash.services import get_open_cash_session, create_cash_movement, reverse_cash_movement
 from .models import Purchase, PurchaseStatus, PurchasePaymentMethod
@@ -31,6 +31,7 @@ from common.access import (
 )
 from django.db.models import IntegerField, Max
 from django.db.models.functions import Cast, Substr
+
 
 
 # Create your views here.
@@ -385,7 +386,10 @@ class PurchaseViewSet(
 
                 if not product.track_inventory:
                     raise serializers.ValidationError({
-                        "items": f'El producto "{product.name}" no controla inventario.'
+                        "items": (
+                            f'El producto "{product.name}" '
+                            "no controla inventario."
+                        )
                     })
 
                 Product.objects.filter(
@@ -396,17 +400,24 @@ class PurchaseViewSet(
 
                 product.cost_price = item.unit_cost
 
-                product_stock, created = ProductStock.objects.select_for_update().get_or_create(
-                    company=purchase.company,
-                    branch=purchase.branch,
-                    product=product,
-                    defaults={
-                        "quantity": Decimal("0.000"),
-                    },
+                product_stock, created = (
+                    ProductStock.objects
+                    .select_for_update()
+                    .get_or_create(
+                        company=purchase.company,
+                        branch=purchase.branch,
+                        product=product,
+                        defaults={
+                            "quantity": Decimal("0.000"),
+                        },
+                    )
                 )
 
                 previous_stock = product_stock.quantity
-                new_stock = previous_stock + item.quantity
+                new_stock = (
+                        previous_stock
+                        + item.quantity
+                )
 
                 product_stock.quantity = new_stock
 
@@ -415,6 +426,18 @@ class PurchaseViewSet(
                         "quantity",
                         "updated_at",
                     ]
+                )
+
+                InventoryLot.objects.create(
+                    company=purchase.company,
+                    branch=purchase.branch,
+                    product=product,
+                    purchase_item=item,
+                    lot_number=item.lot_number,
+                    quantity_initial=item.quantity,
+                    quantity_available=item.quantity,
+                    received_at=purchase.purchase_date,
+                    expiration_date=item.expiration_date,
                 )
 
                 InventoryMovement.objects.create(
@@ -426,7 +449,10 @@ class PurchaseViewSet(
                     previous_stock=previous_stock,
                     new_stock=new_stock,
                     reference=purchase.purchase_number,
-                    notes=f"Entrada por compra {purchase.purchase_number}",
+                    notes=(
+                        f"Entrada por compra "
+                        f"{purchase.purchase_number}"
+                    ),
                     created_by=request.user,
                 )
 
@@ -485,14 +511,24 @@ class PurchaseViewSet(
 
             if purchase.status == PurchaseStatus.CANCELLED:
                 return Response(
-                    {"detail": "La compra ya está cancelada."},
+                    {
+                        "detail": (
+                            "La compra ya está cancelada."
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
             if purchase.status == PurchaseStatus.DRAFT:
                 purchase.mark_as_cancelled()
 
-                purchase.save(update_fields=["status", "cancelled_at", "updated_at"])
+                purchase.save(
+                    update_fields=[
+                        "status",
+                        "cancelled_at",
+                        "updated_at",
+                    ]
+                )
 
                 return Response(
                     self.get_serializer(purchase).data,
@@ -501,27 +537,95 @@ class PurchaseViewSet(
 
             if purchase.status != PurchaseStatus.COMPLETED:
                 return Response(
-                    {"detail": "La compra no se encuentra en un estado válido para cancelarse."},
+                    {
+                        "detail": (
+                            "La compra no se encuentra "
+                            "en un estado válido para cancelarse."
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            items = list(purchase.items.select_related("product").all())
+            items = list(
+                purchase.items
+                .select_related("product")
+                .all()
+            )
 
             if not items:
                 return Response(
-                    {"detail": "La compra no contiene productos."},
+                    {
+                        "detail": (
+                            "La compra no contiene productos."
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+            # ==========================================
+            # LOTES DE INVENTARIO DE ESTA COMPRA
+            # ==========================================
+
+            inventory_lots = list(
+                InventoryLot.objects
+                .select_for_update()
+                .filter(
+                    purchase_item__purchase=purchase,
+                )
+                .select_related(
+                    "product",
+                    "purchase_item",
+                )
+            )
+
+            # No permitimos cancelar si ya se consumió
+            # parte de algún lote de esta compra.
+            for lot in inventory_lots:
+                if (
+                        lot.quantity_available
+                        != lot.quantity_initial
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "detail": (
+                                f'No es posible cancelar la compra '
+                                f'porque el lote '
+                                f'"{lot.lot_number or "Sin lote"}" '
+                                f'del producto "{lot.product.name}" '
+                                f"ya fue utilizado parcialmente."
+                            )
+                        }
+                    )
+
+            # ==========================================
+            # AGRUPAR CANTIDADES POR PRODUCTO
+            # ==========================================
 
             quantities_by_product = {}
             products_by_id = {}
 
             for item in items:
-                quantities_by_product[item.product_id] = quantities_by_product.get(item.product_id,
-                                                                                   Decimal("0.000")) + item.quantity
-                products_by_id[item.product_id] = item.product
+                quantities_by_product[
+                    item.product_id
+                ] = (
+                        quantities_by_product.get(
+                            item.product_id,
+                            Decimal("0.000"),
+                        )
+                        + item.quantity
+                )
 
-            product_ids = list(quantities_by_product.keys())
+                products_by_id[
+                    item.product_id
+                ] = item.product
+
+            product_ids = list(
+                quantities_by_product.keys()
+            )
+
+            # ==========================================
+            # BLOQUEAR STOCK
+            # ==========================================
 
             stocks = (
                 ProductStock.objects
@@ -539,86 +643,201 @@ class PurchaseViewSet(
                 for stock in stocks
             }
 
-            for product_id, quantity in quantities_by_product.items():
-                product = products_by_id[product_id]
-                product_stock = stock_map.get(product_id)
+            # ==========================================
+            # VALIDAR STOCK DISPONIBLE
+            # ==========================================
+
+            for (
+                    product_id,
+                    quantity,
+            ) in quantities_by_product.items():
+                product = products_by_id[
+                    product_id
+                ]
+
+                product_stock = stock_map.get(
+                    product_id
+                )
 
                 if product_stock is None:
-                    raise serializers.ValidationError({
-                        "detail": f'No existe inventario para el producto "{product.name}".'
-                    })
+                    raise serializers.ValidationError(
+                        {
+                            "detail": (
+                                f'No existe inventario para el '
+                                f'producto "{product.name}".'
+                            )
+                        }
+                    )
 
                 if product_stock.quantity < quantity:
-                    raise serializers.ValidationError({
-                        "detail": (
-                            f'No es posible cancelar la compra porque "{product.name}" '
-                            f"solo tiene {format_quantity(product_stock.quantity)} unidades disponibles "
-                            f"y se deben revertir {format_quantity(quantity)}."
-                        )
-                    })
+                    raise serializers.ValidationError(
+                        {
+                            "detail": (
+                                f'No es posible cancelar la compra '
+                                f'porque "{product.name}" solo tiene '
+                                f'{format_quantity(product_stock.quantity)} '
+                                f"unidades disponibles y se deben "
+                                f'revertir {format_quantity(quantity)}.'
+                            )
+                        }
+                    )
 
-            for product_id, quantity in quantities_by_product.items():
-                product = products_by_id[product_id]
-                product_stock = stock_map[product_id]
+            # ==========================================
+            # REVERTIR STOCK
+            # ==========================================
 
-                previous_stock = product_stock.quantity
-                new_stock = previous_stock - quantity
+            for (
+                    product_id,
+                    quantity,
+            ) in quantities_by_product.items():
+                product = products_by_id[
+                    product_id
+                ]
+
+                product_stock = stock_map[
+                    product_id
+                ]
+
+                previous_stock = (
+                    product_stock.quantity
+                )
+
+                new_stock = (
+                        previous_stock
+                        - quantity
+                )
 
                 product_stock.quantity = new_stock
-                product_stock.save(update_fields=["quantity", "updated_at"])
+
+                product_stock.save(
+                    update_fields=[
+                        "quantity",
+                        "updated_at",
+                    ]
+                )
 
                 InventoryMovement.objects.create(
                     company=purchase.company,
                     branch=purchase.branch,
                     product=product,
-                    movement_type=InventoryMovementType.PURCHASE_REVERSAL,
+                    movement_type=(
+                        InventoryMovementType
+                        .PURCHASE_REVERSAL
+                    ),
                     quantity=quantity,
                     previous_stock=previous_stock,
                     new_stock=new_stock,
                     reference=purchase.purchase_number,
-                    notes=f"Reversión por cancelación de compra {purchase.purchase_number}",
+                    notes=(
+                        "Reversión por cancelación "
+                        f"de compra "
+                        f"{purchase.purchase_number}"
+                    ),
                     created_by=request.user,
                 )
 
-            # Si fue una compra en efectivo, revertimos también el movimiento de caja.
-            if purchase.payment_method == PurchasePaymentMethod.CASH:
+            # ==========================================
+            # ELIMINAR LOTES DE ESTA COMPRA
+            # ==========================================
+
+            InventoryLot.objects.filter(
+                purchase_item__purchase=purchase,
+            ).delete()
+
+            # ==========================================
+            # REVERTIR CAJA
+            # ==========================================
+
+            if (
+                    purchase.payment_method
+                    == PurchasePaymentMethod.CASH
+            ):
                 try:
-                    original_cash_movement = CashMovement.objects.select_for_update().select_related(
-                        "cash_session").get(
-                        source_type=CashMovementSource.PURCHASE,
-                        source_id=purchase.id,
-                        movement_type=CashMovementType.PURCHASE,
+                    original_cash_movement = (
+                        CashMovement.objects
+                        .select_for_update()
+                        .select_related(
+                            "cash_session"
+                        )
+                        .get(
+                            source_type=(
+                                CashMovementSource.PURCHASE
+                            ),
+                            source_id=purchase.id,
+                            movement_type=(
+                                CashMovementType.PURCHASE
+                            ),
+                        )
                     )
                 except CashMovement.DoesNotExist:
-                    raise ValidationError({
-                        "detail": "No se encontró el movimiento de caja original de la compra."
-                    })
+                    raise ValidationError(
+                        {
+                            "detail": (
+                                "No se encontró el movimiento "
+                                "de caja original de la compra."
+                            )
+                        }
+                    )
 
-                original_cash_session = original_cash_movement.cash_session
+                original_cash_session = (
+                    original_cash_movement.cash_session
+                )
 
-                if original_cash_session.status == CashSessionStatus.OPEN:
-                    cash_session = get_open_cash_session(
-                        cash_session_id=original_cash_session.id,
-                        company=purchase.company,
-                        branch=purchase.branch,
+                if (
+                        original_cash_session.status
+                        == CashSessionStatus.OPEN
+                ):
+                    cash_session = (
+                        get_open_cash_session(
+                            cash_session_id=(
+                                original_cash_session.id
+                            ),
+                            company=purchase.company,
+                            branch=purchase.branch,
+                        )
                     )
                 else:
-                    cash_session = get_open_cash_session(
-                        cash_session_id=request.data.get("cash_session_id"),
-                        company=purchase.company,
-                        branch=purchase.branch,
+                    cash_session = (
+                        get_open_cash_session(
+                            cash_session_id=(
+                                request.data.get(
+                                    "cash_session_id"
+                                )
+                            ),
+                            company=purchase.company,
+                            branch=purchase.branch,
+                        )
                     )
 
                 reverse_cash_movement(
-                    original_movement=original_cash_movement,
+                    original_movement=(
+                        original_cash_movement
+                    ),
                     cash_session=cash_session,
                     user=request.user,
-                    reference=purchase.purchase_number,
-                    notes=f"Reversión por cancelación de compra {purchase.purchase_number}",
+                    reference=(
+                        purchase.purchase_number
+                    ),
+                    notes=(
+                        "Reversión por cancelación "
+                        f"de compra "
+                        f"{purchase.purchase_number}"
+                    ),
                 )
 
+            # ==========================================
+            # CANCELAR COMPRA
+            # ==========================================
+
             purchase.mark_as_cancelled()
-            purchase.save(update_fields=["status", "cancelled_at", "updated_at"])
+
+            purchase.save(
+                update_fields=[
+                    "status",
+                    "cancelled_at",
+                    "updated_at",
+                ]
+            )
 
         return Response(
             self.get_serializer(purchase).data,

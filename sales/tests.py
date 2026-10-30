@@ -17,6 +17,7 @@ from inventory.models import (
     InventoryMovement,
     InventoryMovementType,
     ProductStock,
+    InventoryLot
 )
 from sales.access import get_allowed_branches
 from sales.models import (
@@ -32,6 +33,7 @@ from sales.serializers import (
 )
 from sales.views import SaleViewSet
 
+from datetime import date
 
 User = get_user_model()
 
@@ -132,6 +134,17 @@ class SaleTests(TestCase):
             branch=self.branch,
             product=self.product,
             quantity=Decimal("10.000"),
+        )
+
+        self.inventory_lot = InventoryLot.objects.create(
+            company=self.company,
+            branch=self.branch,
+            product=self.product,
+            lot_number="TEST-001",
+            quantity_initial=Decimal("10.000"),
+            quantity_available=Decimal("10.000"),
+            received_at=date(2026, 10, 30),
+            expiration_date=date(2027, 12, 31),
         )
 
     def build_request(self, idempotency_key=None):
@@ -516,7 +529,7 @@ class SaleTests(TestCase):
         sale = serializer.save()
 
         self.stock.refresh_from_db()
-
+        self.inventory_lot.refresh_from_db()
         self.assertEqual(
             sale.status,
             SaleStatus.COMPLETED,
@@ -534,6 +547,11 @@ class SaleTests(TestCase):
 
         self.assertEqual(
             self.stock.quantity,
+            Decimal("8.000"),
+        )
+
+        self.assertEqual(
+            self.inventory_lot.quantity_available,
             Decimal("8.000"),
         )
 
@@ -630,10 +648,19 @@ class SaleTests(TestCase):
 
         sale = serializer.save()
 
+        # Después de la venta:
+        # ProductStock: 10 -> 8
+        # InventoryLot: 10 -> 8
         self.stock.refresh_from_db()
+        self.inventory_lot.refresh_from_db()
 
         self.assertEqual(
             self.stock.quantity,
+            Decimal("8.000"),
+        )
+
+        self.assertEqual(
+            self.inventory_lot.quantity_available,
             Decimal("8.000"),
         )
 
@@ -664,8 +691,12 @@ class SaleTests(TestCase):
             status.HTTP_200_OK,
         )
 
+        # Después de cancelar:
+        # ProductStock: 8 -> 10
+        # InventoryLot: 8 -> 10
         sale.refresh_from_db()
         self.stock.refresh_from_db()
+        self.inventory_lot.refresh_from_db()
 
         self.assertEqual(
             sale.status,
@@ -674,6 +705,11 @@ class SaleTests(TestCase):
 
         self.assertEqual(
             self.stock.quantity,
+            Decimal("10.000"),
+        )
+
+        self.assertEqual(
+            self.inventory_lot.quantity_available,
             Decimal("10.000"),
         )
 
@@ -687,6 +723,7 @@ class SaleTests(TestCase):
             Decimal("2.000"),
         )
 
+        # Intentar cancelar una segunda vez debe fallar
         second_request = factory.post(
             f"/sales/{sale.id}/cancel/",
             {},
@@ -709,12 +746,20 @@ class SaleTests(TestCase):
         )
 
         self.stock.refresh_from_db()
+        self.inventory_lot.refresh_from_db()
 
+        # No debe restaurar stock dos veces
         self.assertEqual(
             self.stock.quantity,
             Decimal("10.000"),
         )
 
+        self.assertEqual(
+            self.inventory_lot.quantity_available,
+            Decimal("10.000"),
+        )
+
+        # Solo debe existir una devolución
         self.assertEqual(
             InventoryMovement.objects.filter(
                 sale=sale,
@@ -818,6 +863,28 @@ class SaleIdempotencyTests(TestCase):
             branch=self.other_branch,
             product=self.other_product,
             quantity=Decimal("10.000"),
+        )
+
+        self.inventory_lot = InventoryLot.objects.create(
+            company=self.company,
+            branch=self.branch,
+            product=self.product,
+            lot_number="TEST-A",
+            quantity_initial=Decimal("10.000"),
+            quantity_available=Decimal("10.000"),
+            received_at=date(2026, 10, 30),
+            expiration_date=date(2027, 12, 31),
+        )
+
+        self.other_inventory_lot = InventoryLot.objects.create(
+            company=self.other_company,
+            branch=self.other_branch,
+            product=self.other_product,
+            lot_number="TEST-B",
+            quantity_initial=Decimal("10.000"),
+            quantity_available=Decimal("10.000"),
+            received_at=date(2026, 10, 30),
+            expiration_date=date(2027, 12, 31),
         )
 
     def build_request(

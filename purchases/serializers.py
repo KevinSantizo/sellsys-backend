@@ -112,6 +112,8 @@ class PurchaseItemSerializer(
             "product_name",
             "product_sku",
             "quantity",
+            "lot_number",
+            "expiration_date",
             "unit_cost",
             "sale_price",
             "subtotal",
@@ -496,6 +498,8 @@ class PurchaseSerializer(
             quantity = item_data["quantity"]
             unit_cost = item_data["unit_cost"]
             sale_price = item_data["sale_price"]
+            lot_number = item_data.get( "lot_number", "",)
+            expiration_date = item_data.get( "expiration_date",)
 
             subtotal = quantity * unit_cost
 
@@ -506,6 +510,8 @@ class PurchaseSerializer(
                     quantity=quantity,
                     unit_cost=unit_cost,
                     subtotal=subtotal,
+                    lot_number=lot_number,
+                    expiration_date=expiration_date,
                 )
             )
 

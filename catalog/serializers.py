@@ -269,6 +269,9 @@ class ProductListSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
 
+    next_expiration_date = serializers.DateField(
+        read_only=True,
+    )
 
     class Meta:
         model = Product
@@ -292,6 +295,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "content_unit_symbol",
             "image_url",
             "image_public_id",
+            "next_expiration_date",
         )
 
         read_only_fields = fields

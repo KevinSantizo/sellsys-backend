@@ -8,6 +8,7 @@ from django.db.models import Q
 
 from branches.models import Branch
 from catalog.models import Product
+from common.models import BaseModel
 from companies.models import Company
 
 
@@ -332,6 +333,159 @@ class InventoryMovement(models.Model):
     def __str__(self):
         return (
             f"{self.get_movement_type_display()} - "
+            f"{self.product.name} - "
+            f"{self.quantity}"
+        )
+
+class InventoryLot(BaseModel):
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name="inventory_lots",
+    )
+
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.CASCADE,
+        related_name="inventory_lots",
+    )
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="inventory_lots",
+    )
+
+    purchase_item = models.ForeignKey(
+        "purchases.PurchaseItem",
+        on_delete=models.SET_NULL,
+        related_name="inventory_lots",
+        null=True,
+        blank=True,
+    )
+
+    lot_number = models.CharField(
+        max_length=100,
+        blank=True,
+    )
+
+    quantity_initial = models.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+    )
+
+    quantity_available = models.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+    )
+
+    received_at = models.DateField()
+
+    expiration_date = models.DateField(
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = (
+            "expiration_date",
+            "received_at",
+        )
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "company",
+                    "branch",
+                    "product",
+                ],
+                name="inventory_lot_lookup_idx",
+            ),
+            models.Index(
+                fields=[
+                    "company",
+                    "branch",
+                    "expiration_date",
+                ],
+                name="inventory_lot_exp_idx",
+            ),
+        ]
+
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    quantity_initial__gt=0,
+                ),
+                name="inventory_lot_initial_gt_0",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    quantity_available__gte=0,
+                ),
+                name="inventory_lot_available_gte_0",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.product.name} - "
+            f"{self.lot_number or 'Sin lote'}"
+        )
+
+class InventoryLotSaleAllocation(BaseModel):
+    sale = models.ForeignKey(
+        "sales.Sale",
+        on_delete=models.CASCADE,
+        related_name="lot_allocations",
+    )
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="sale_lot_allocations",
+    )
+
+    inventory_lot = models.ForeignKey(
+        InventoryLot,
+        on_delete=models.PROTECT,
+        related_name="sale_allocations",
+    )
+
+    quantity = models.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=[
+                    "sale",
+                    "product",
+                ],
+                name="lot_sale_product_idx",
+            ),
+            models.Index(
+                fields=[
+                    "inventory_lot",
+                    "sale",
+                ],
+                name="lot_sale_lot_idx",
+            ),
+        ]
+
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    quantity__gt=0,
+                ),
+                name="lot_sale_quantity_gt_0",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.sale.sale_number} - "
             f"{self.product.name} - "
             f"{self.quantity}"
         )
