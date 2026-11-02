@@ -620,7 +620,7 @@ class ProductDetailSerializer(
 
         if content_quantity is None  and content_unit is not None:
             errors["content_quantity"] = (
-                "Debes indicar la cantidad de contenido."
+                "Debes indicar la presentación."
             )
 
         if content_quantity is not None and content_unit is None:
