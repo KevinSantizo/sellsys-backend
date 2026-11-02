@@ -22,6 +22,9 @@ from common.access import (
     validate_company_branch_access,
 )
 
+from datetime import datetime, time, timedelta
+from django.utils.dateparse import parse_date
+
 # Create your views here.
 
 
@@ -293,6 +296,8 @@ class CashMovementViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gene
         direction = self.request.query_params.get("direction")
         movement_type = self.request.query_params.get("movement_type")
         source_type = self.request.query_params.get("source_type")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
 
         if company_id: queryset = queryset.filter(company_id=company_id)
         if branch_id: queryset = queryset.filter(branch_id=branch_id)
@@ -301,6 +306,41 @@ class CashMovementViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gene
         if direction: queryset = queryset.filter(direction=direction)
         if movement_type: queryset = queryset.filter(movement_type=movement_type)
         if source_type: queryset = queryset.filter(source_type=source_type)
+        current_timezone = timezone.get_current_timezone()
+
+        if date_from:
+            parsed_date_from = parse_date( date_from, )
+
+            if parsed_date_from:
+                start_datetime = timezone.make_aware(
+                    datetime.combine(
+                        parsed_date_from,
+                        time.min,
+                    ),
+                    current_timezone,
+                )
+
+                queryset = queryset.filter(
+                    created_at__gte=start_datetime,
+                )
+
+        if date_to:
+            parsed_date_to = parse_date(
+                date_to,
+            )
+
+            if parsed_date_to:
+                end_datetime = timezone.make_aware(
+                    datetime.combine(
+                        parsed_date_to + timedelta(days=1),
+                        time.min,
+                    ),
+                    current_timezone,
+                )
+
+                queryset = queryset.filter(
+                    created_at__lt=end_datetime,
+                )
 
         return queryset
 

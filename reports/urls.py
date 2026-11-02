@@ -1,6 +1,27 @@
 from django.urls import path
 
-from .views import CashReportView, ExpensesReportView, PurchasesReportView, ReportDailyView, ReportSummaryView, SalesReportView, InventoryReportView, ProfitabilityReportView
+from .views import (
+    CashExcelReportView,
+    CashPdfReportView,
+    CashReportView,
+    ExpensesExcelReportView,
+    ExpensesPdfReportView,
+    ExpensesReportView,
+    InventoryExcelReportView,
+    InventoryPdfReportView,
+    InventoryReportView,
+    ProfitabilityExcelReportView,
+    ProfitabilityPdfReportView,
+    ProfitabilityReportView,
+    PurchasesExcelReportView,
+    PurchasesPdfReportView,
+    PurchasesReportView,
+    ReportDailyView,
+    ReportSummaryView,
+    SalesExcelReportView,
+    SalesPdfReportView,
+    SalesReportView,
+)
 
 urlpatterns = [
     path("summary/", ReportSummaryView.as_view(), name="report-summary"),
@@ -10,7 +31,69 @@ urlpatterns = [
     path("expenses/", ExpensesReportView.as_view(), name="report-expenses"),
     path("cash/", CashReportView.as_view(), name="report-cash"),
     path("inventory/", InventoryReportView.as_view(), name="report-inventory"),
-    path("profitability/", ProfitabilityReportView.as_view(), name="report-profitability"),
+    path(
+        "profitability/",
+        ProfitabilityReportView.as_view(),
+        name="report-profitability",
+    ),
+    path(
+        "sales/export/excel/",
+        SalesExcelReportView.as_view(),
+        name="sales-export-excel",
+    ),
+    path(
+        "sales/export/pdf/",
+        SalesPdfReportView.as_view(),
+        name="sales-export-pdf",
+    ),
+    path(
+        "purchases/export/excel/",
+        PurchasesExcelReportView.as_view(),
+        name="purchases-export-excel",
+    ),
+    path(
+        "purchases/export/pdf/",
+        PurchasesPdfReportView.as_view(),
+        name="purchases-export-pdf",
+    ),
+    path(
+        "expenses/export/excel/",
+        ExpensesExcelReportView.as_view(),
+        name="expenses-export-excel",
+    ),
+    path(
+        "expenses/export/pdf/",
+        ExpensesPdfReportView.as_view(),
+        name="expenses-export-pdf",
+    ),
+    path(
+        "cash/export/excel/",
+        CashExcelReportView.as_view(),
+        name="cash-export-excel",
+    ),
+    path(
+        "cash/export/pdf/",
+        CashPdfReportView.as_view(),
+        name="cash-export-pdf",
+    ),
+    path(
+        "inventory/export/excel/",
+        InventoryExcelReportView.as_view(),
+        name="inventory-export-excel",
+    ),
+    path(
+        "inventory/export/pdf/",
+        InventoryPdfReportView.as_view(),
+        name="inventory-export-pdf",
+    ),
+    path(
+        "profitability/export/excel/",
+        ProfitabilityExcelReportView.as_view(),
+        name="profitability-export-excel",
+    ),
+    path(
+        "profitability/export/pdf/",
+        ProfitabilityPdfReportView.as_view(),
+        name="profitability-export-pdf",
+    ),
 ]
-
-
