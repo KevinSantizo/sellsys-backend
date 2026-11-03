@@ -7,10 +7,12 @@ from .models import Brand, Category, Product, UnitOfMeasure
 from decimal import Decimal
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from branches.models import Branch
 from inventory.models import (
+    InventoryLot,
     InventoryMovement,
     InventoryMovementType,
     ProductStock,
@@ -389,6 +391,58 @@ class ProductDetailSerializer(
         default=Decimal("0.000"),
     )
 
+    initial_lot_number = serializers.CharField(
+        max_length=100,
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        default="",
+    )
+
+    initial_expiration_date = serializers.DateField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+
+    def _get_initial_lot(self, obj):
+        lots = obj.inventory_lots.filter(
+            purchase_item__isnull=True,
+        )
+
+        request = self.context.get("request")
+        branch_id = (
+            request.query_params.get("branch_id")
+            if request is not None
+            else None
+        )
+
+        if branch_id:
+            lots = lots.filter(branch_id=branch_id)
+
+        return lots.order_by(
+            "-received_at",
+        ).first()
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        lot = self._get_initial_lot(instance)
+
+        representation["initial_lot_number"] = (
+            lot.lot_number
+            if lot
+            else None
+        )
+        representation["initial_expiration_date"] = (
+            lot.expiration_date.isoformat()
+            if lot and lot.expiration_date
+            else None
+        )
+
+        return representation
+
 
     class Meta:
         model = Product
@@ -422,6 +476,8 @@ class ProductDetailSerializer(
             "updated_at",
             "branch_id",
             "initial_stock",
+            "initial_lot_number",
+            "initial_expiration_date",
             "image_url",
             "image_public_id",
         )
@@ -685,10 +741,31 @@ class ProductDetailSerializer(
                 Decimal("0.000"),
             )
 
+            initial_lot_number = (
+                attrs.get("initial_lot_number") or ""
+            ).strip()
+            initial_expiration_date = attrs.get(
+                "initial_expiration_date",
+            )
+
+            attrs["initial_lot_number"] = initial_lot_number
+
             track_inventory = attrs.get(
                 "track_inventory",
                 True,
             )
+
+            if (
+                product_type == Product.ProductType.SERVICE
+                and (
+                    initial_lot_number
+                    or initial_expiration_date
+                )
+            ):
+                errors["initial_lot_number"] = (
+                    "Los servicios no pueden tener lotes "
+                    "ni fechas de vencimiento."
+                )
 
             if product_type == Product.ProductType.PRODUCT and track_inventory:
                 if not branch_id:
@@ -700,6 +777,24 @@ class ProductDetailSerializer(
                 if initial_stock < 0:
                     errors["initial_stock"] = (
                         "El stock inicial no puede ser negativo."
+                    )
+
+                if initial_stock > 0 and not initial_expiration_date:
+                    errors["initial_expiration_date"] = (
+                        "La fecha de vencimiento es obligatoria "
+                        "cuando registras stock inicial."
+                    )
+
+                if (
+                    (
+                        initial_lot_number
+                        or initial_expiration_date
+                    )
+                    and initial_stock <= 0
+                ):
+                    errors["initial_stock"] = (
+                        "Para registrar un lote o vencimiento "
+                        "debes indicar un stock inicial mayor que cero."
                     )
 
                 if (
@@ -745,6 +840,19 @@ class ProductDetailSerializer(
             Decimal("0.000"),
         )
 
+        initial_lot_number = (
+            validated_data.pop(
+                "initial_lot_number",
+                "",
+            )
+            or ""
+        ).strip()
+
+        initial_expiration_date = validated_data.pop(
+            "initial_expiration_date",
+            None,
+        )
+
         product = super().create(
             validated_data
         )
@@ -770,6 +878,24 @@ class ProductDetailSerializer(
         )
 
         if initial_stock > 0:
+            if not initial_lot_number:
+                initial_lot_number = (
+                    f"INI-{timezone.localdate().year}-"
+                    f"{product.sku.strip().upper()}"
+                )
+
+            InventoryLot.objects.create(
+                company=product.company,
+                branch=branch,
+                product=product,
+                purchase_item=None,
+                lot_number=initial_lot_number,
+                quantity_initial=initial_stock,
+                quantity_available=initial_stock,
+                received_at=timezone.localdate(),
+                expiration_date=initial_expiration_date,
+            )
+
             InventoryMovement.objects.create(
                 company=product.company,
                 branch=branch,

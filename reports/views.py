@@ -5,13 +5,17 @@ from django.db.models import (
     Count,
     DecimalField,
     ExpressionWrapper,
+    Exists,
     F,
+    OuterRef,
+    Prefetch,
     Q,
     Sum,
 )
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,7 +32,7 @@ from expenses.models import (
     Expense,
     ExpenseStatus,
 )
-from inventory.models import ProductStock
+from inventory.models import InventoryLot, ProductStock
 from purchases.models import (
     Purchase,
     PurchaseStatus,
@@ -39,6 +43,7 @@ from sales.models import (
     SaleStatus,
 )
 from .serializers import (
+    ExpiringProductsReportQuerySerializer,
     InventoryReportQuerySerializer,
     ReportSummaryQuerySerializer,
 )
@@ -79,6 +84,7 @@ def get_inventory_export_queryset(
     category_id=None,
     brand_id=None,
     product_type=None,
+    expiration_status=None,
 ):
     queryset = (
         ProductStock.objects
@@ -92,6 +98,19 @@ def get_inventory_export_queryset(
             "product__category",
             "product__brand",
             "product__base_unit",
+        )
+    )
+    lot_queryset = (
+        InventoryLot.objects
+        .filter(
+            company_id=company_id,
+            branch_id=branch_id,
+            quantity_available__gt=0,
+        )
+        .order_by(
+            "expiration_date",
+            "received_at",
+            "lot_number",
         )
     )
     if search:
@@ -131,6 +150,59 @@ def get_inventory_export_queryset(
         queryset = queryset.filter(
             product__product_type=product_type,
         )
+    if expiration_status:
+        normalized_expiration_status = str(
+            expiration_status,
+        ).strip().upper()
+
+        if normalized_expiration_status not in {
+            "ALL",
+            "UPCOMING",
+            "EXPIRED",
+        }:
+            raise ValidationError({
+                "expiration_status": (
+                    "El filtro debe ser ALL, UPCOMING o EXPIRED."
+                ),
+            })
+
+        if normalized_expiration_status != "ALL":
+            today = timezone.localdate()
+            lot_filters = {
+                "company_id": company_id,
+                "branch_id": branch_id,
+                "product_id": OuterRef("product_id"),
+                "quantity_available__gt": 0,
+                "expiration_date__isnull": False,
+            }
+
+            if normalized_expiration_status == "UPCOMING":
+                lot_queryset = lot_queryset.filter(
+                    expiration_date__gte=today,
+                    expiration_date__lte=today + timedelta(days=30),
+                )
+                lot_filters.update({
+                    "expiration_date__gte": today,
+                    "expiration_date__lte": today + timedelta(days=30),
+                })
+            else:
+                lot_queryset = lot_queryset.filter(
+                    expiration_date__lt=today,
+                )
+                lot_filters["expiration_date__lt"] = today
+
+            queryset = queryset.filter(
+                Exists(
+                    InventoryLot.objects.filter(**lot_filters),
+                ),
+            )
+    queryset = queryset.prefetch_related(
+        Prefetch(
+            "product__inventory_lots",
+            queryset=lot_queryset,
+            to_attr="export_inventory_lots",
+        ),
+    )
     return queryset.order_by(
         "product__name",
         "product__sku",
@@ -185,6 +257,9 @@ class InventoryExcelReportView(APIView):
                 ),
                 product_type=request.query_params.get(
                     "product_type",
+                ),
+                expiration_status=request.query_params.get(
+                    "expiration_status",
                 ),
             )
         )
@@ -259,6 +334,9 @@ class InventoryPdfReportView(APIView):
                 ),
                 product_type=request.query_params.get(
                     "product_type",
+                ),
+                expiration_status=request.query_params.get(
+                    "expiration_status",
                 ),
             )
         )
@@ -1750,6 +1828,155 @@ class InventoryReportView(APIView):
             }
         )
 
+class ExpiringProductsReportView(APIView):
+    permission_classes = [
+        IsAuthenticated,
+    ]
+
+    @extend_schema(
+        parameters=[
+            ExpiringProductsReportQuerySerializer,
+        ],
+        responses=OpenApiTypes.OBJECT,
+    )
+    def get(self, request):
+        serializer = ExpiringProductsReportQuerySerializer(
+            data=request.query_params,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        company_id = serializer.validated_data[
+            "company_id"
+        ]
+        branch_id = serializer.validated_data[
+            "branch_id"
+        ]
+        report_status = serializer.validated_data[
+            "status"
+        ]
+        days = serializer.validated_data[
+            "days"
+        ]
+
+        validate_company_branch_access(
+            request.user,
+            company_id,
+            branch_id,
+        )
+
+        today = timezone.localdate()
+        queryset = (
+            InventoryLot.objects
+            .filter(
+                company_id=company_id,
+                branch_id=branch_id,
+                quantity_available__gt=0,
+                expiration_date__isnull=False,
+            )
+            .select_related(
+                "product",
+                "branch",
+            )
+        )
+
+        if report_status == "EXPIRED":
+            queryset = queryset.filter(
+                expiration_date__lt=today,
+            )
+        else:
+            queryset = queryset.filter(
+                expiration_date__gte=today,
+                expiration_date__lte=today + timedelta(days=days),
+            )
+
+        search = request.query_params.get(
+            "search",
+        )
+        if search:
+            queryset = queryset.filter(
+                Q(product__name__icontains=search)
+                | Q(product__sku__icontains=search)
+                | Q(product__barcode__icontains=search)
+            )
+
+        queryset = queryset.order_by(
+            "expiration_date",
+            "product__name",
+            "lot_number",
+        )
+
+        summary = queryset.aggregate(
+            products=Count(
+                "product_id",
+                distinct=True,
+            ),
+            lots=Count(
+                "id",
+            ),
+            total_units=Sum(
+                "quantity_available",
+            ),
+        )
+
+        paginator = ReportPagination()
+        page = paginator.paginate_queryset(
+            queryset,
+            request,
+        )
+
+        results = []
+        for lot in page:
+            days_remaining = (
+                lot.expiration_date - today
+            ).days
+            row_status = (
+                "EXPIRED"
+                if days_remaining < 0
+                else "TODAY"
+                if days_remaining == 0
+                else "UPCOMING"
+            )
+            results.append(
+                {
+                    "lot_id": lot.id,
+                    "product_id": lot.product_id,
+                    "name": lot.product.name,
+                    "sku": lot.product.sku,
+                    "barcode": lot.product.barcode,
+                    "branch_id": lot.branch_id,
+                    "branch_name": lot.branch.name,
+                    "lot_number": lot.lot_number,
+                    "quantity_available": quantity_string(
+                        lot.quantity_available,
+                    ),
+                    "expiration_date": lot.expiration_date.isoformat(),
+                    "days_remaining": days_remaining,
+                    "status": row_status,
+                }
+            )
+
+        return Response(
+            {
+                "company_id": company_id,
+                "branch_id": branch_id,
+                "status": report_status,
+                "days": days,
+                "summary": {
+                    "products": summary["products"] or 0,
+                    "lots": summary["lots"] or 0,
+                    "total_units": quantity_string(
+                        summary["total_units"],
+                    ),
+                },
+                "count": paginator.page.paginator.count,
+                "next": paginator.get_next_link(),
+                "previous": paginator.get_previous_link(),
+                "results": results,
+            }
+        )
+
 def get_profitability_report_data(
     *,
     company_id,
@@ -2740,3 +2967,4 @@ class CashPdfReportView(APIView):
             f'attachment; filename="{filename}"'
         )
         return response
+

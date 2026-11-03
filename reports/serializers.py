@@ -19,3 +19,19 @@ class ReportSummaryQuerySerializer(serializers.Serializer):
 class InventoryReportQuerySerializer(serializers.Serializer):
     company_id = serializers.UUIDField()
     branch_id = serializers.UUIDField()
+
+
+class ExpiringProductsReportQuerySerializer(serializers.Serializer):
+    company_id = serializers.UUIDField()
+    branch_id = serializers.UUIDField()
+    status = serializers.ChoiceField(
+        choices=("UPCOMING", "EXPIRED"),
+        required=False,
+        default="UPCOMING",
+    )
+    days = serializers.IntegerField(
+        required=False,
+        min_value=0,
+        max_value=3650,
+        default=30,
+    )

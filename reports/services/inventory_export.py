@@ -1,5 +1,6 @@
 from decimal import Decimal
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
@@ -19,6 +20,53 @@ def _quantity(value):
     return value or Decimal("0.000")
 
 
+def _lot_details(stock):
+    lots = getattr(
+        stock.product,
+        "export_inventory_lots",
+        (),
+    )
+
+    if not lots:
+        return "Sin lote", "Sin vencimiento"
+
+    lot_numbers = "\n".join(
+        lot.lot_number or "Sin lote"
+        for lot in lots
+    )
+    expiration_dates = "\n".join(
+        (
+            lot.expiration_date.strftime("%d/%m/%Y")
+            if lot.expiration_date
+            else "Sin vencimiento"
+        )
+        for lot in lots
+    )
+
+    return lot_numbers, expiration_dates
+
+
+def _pdf_lot_details(stock, styles):
+    lot_numbers, expiration_dates = _lot_details(stock)
+
+    return (
+        Paragraph(
+            "<br/>".join(
+                escape(value)
+                for value in lot_numbers.split("\n")
+            ),
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<br/>".join(
+                escape(value)
+                for value in expiration_dates.split("\n")
+            ),
+            styles["BodyText"],
+        ),
+    )
+
+
 def build_inventory_excel(
     *,
     stocks,
@@ -35,7 +83,7 @@ def build_inventory_excel(
         bold=True,
         size=16,
     )
-    sheet.merge_cells("A1:L1")
+    sheet.merge_cells("A1:N1")
 
     sheet["A3"] = "Empresa"
     sheet["B3"] = company_name
@@ -53,6 +101,8 @@ def build_inventory_excel(
         "Categoría",
         "Marca",
         "Unidad",
+        "Lote",
+        "Vencimiento",
         "Existencia",
         "Costo unitario",
         "Precio de venta",
@@ -89,6 +139,7 @@ def build_inventory_excel(
         quantity = _quantity(stock.quantity)
         cost_price = _decimal(product.cost_price)
         sale_price = _decimal(product.sale_price)
+        lot_numbers, expiration_dates = _lot_details(stock)
         cost_value = quantity * cost_price
         sale_value = quantity * sale_price
 
@@ -103,6 +154,8 @@ def build_inventory_excel(
             product.category.name if product.category else "",
             product.brand.name if product.brand else "",
             product.base_unit.symbol if product.base_unit else "",
+            lot_numbers,
+            expiration_dates,
             float(quantity),
             float(cost_price),
             float(sale_price),
@@ -135,13 +188,13 @@ def build_inventory_excel(
     for label, value in summary:
         sheet.cell(
             row=row,
-            column=10,
+            column=12,
             value=label,
         ).font = Font(bold=True)
 
         cell = sheet.cell(
             row=row,
-            column=11,
+            column=13,
             value=value,
         )
         cell.font = Font(bold=True)
@@ -154,14 +207,23 @@ def build_inventory_excel(
     ):
         sheet.cell(
             row=current_row,
-            column=7,
+            column=9,
         ).number_format = "#,##0.000"
 
-        for column in (8, 9, 10, 11):
+        for column in (10, 11, 12, 13):
             sheet.cell(
                 row=current_row,
                 column=column,
             ).number_format = "#,##0.00"
+
+        for column in (7, 8):
+            sheet.cell(
+                row=current_row,
+                column=column,
+            ).alignment = Alignment(
+                vertical="top",
+                wrap_text=True,
+            )
 
     widths = {
         1: 30,
@@ -170,12 +232,14 @@ def build_inventory_excel(
         4: 20,
         5: 18,
         6: 12,
-        7: 14,
-        8: 16,
-        9: 16,
-        10: 18,
-        11: 18,
-        12: 12,
+        7: 22,
+        8: 18,
+        9: 14,
+        10: 16,
+        11: 16,
+        12: 18,
+        13: 18,
+        14: 12,
     }
 
     for column, width in widths.items():
@@ -235,6 +299,8 @@ def build_inventory_pdf(
         "Categoría",
         "Marca",
         "Unidad",
+        "Lote",
+        "Vencimiento",
         "Exist.",
         "Costo",
         "Venta",
@@ -252,6 +318,10 @@ def build_inventory_pdf(
         quantity = _quantity(stock.quantity)
         cost_price = _decimal(product.cost_price)
         sale_price = _decimal(product.sale_price)
+        lot_numbers, expiration_dates = _pdf_lot_details(
+            stock,
+            styles,
+        )
         cost_value = quantity * cost_price
         sale_value = quantity * sale_price
 
@@ -274,6 +344,8 @@ def build_inventory_pdf(
                 styles["BodyText"],
             ),
             product.base_unit.symbol if product.base_unit else "",
+            lot_numbers,
+            expiration_dates,
             f"{quantity:,.3f}",
             f"{cost_price:,.2f}",
             f"{sale_price:,.2f}",
@@ -286,17 +358,19 @@ def build_inventory_pdf(
         data,
         repeatRows=1,
         colWidths=[
-            37 * mm,
-            23 * mm,
-            27 * mm,
-            23 * mm,
+            34 * mm,
+            20 * mm,
+            22 * mm,
+            18 * mm,
+            12 * mm,
+            28 * mm,
+            24 * mm,
             15 * mm,
+            18 * mm,
             18 * mm,
             20 * mm,
             20 * mm,
-            23 * mm,
-            23 * mm,
-            17 * mm,
+            15 * mm,
         ],
     )
 
@@ -330,8 +404,8 @@ def build_inventory_pdf(
                 ),
                 (
                     "ALIGN",
-                    (5, 1),
-                    (9, -1),
+                    (7, 1),
+                    (11, -1),
                     "RIGHT",
                 ),
                 (
@@ -429,3 +503,4 @@ def build_inventory_pdf(
     output.seek(0)
 
     return output
+

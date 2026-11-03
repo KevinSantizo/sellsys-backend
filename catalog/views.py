@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from rest_framework.viewsets import ModelViewSet
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import (
@@ -22,12 +24,13 @@ from decimal import Decimal
 from django.db.models import (
     DateField,
     DecimalField,
+    Exists,
     OuterRef,
     Subquery,
     Value,
 )
 from django.db.models.functions import Coalesce
-from inventory.models import ProductStock
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from common.access import validate_company_branch_access
 
@@ -39,10 +42,7 @@ from catalog.services.cloudinary_service import (
     upload_product_image,
 )
 
-from inventory.models import (
-    InventoryLot,
-    ProductStock,
-)
+from inventory.models import InventoryLot, ProductStock
 
 class CatalogBaseViewSet(
     CompanyAccessMixin,
@@ -360,6 +360,49 @@ class ProductViewSet(CatalogBaseViewSet):
                     output_field=DateField(),
                 ),
             )
+
+            expiration_status = self.request.query_params.get(
+                "expiration_status",
+            )
+
+            if expiration_status:
+                expiration_status = expiration_status.upper()
+
+                if expiration_status not in {"UPCOMING", "EXPIRED"}:
+                    raise ValidationError({
+                        "expiration_status": (
+                            "El filtro debe ser UPCOMING o EXPIRED."
+                        ),
+                    })
+
+                today = timezone.localdate()
+                lot_filter = {
+                    "company_id": company_id,
+                    "branch_id": branch_id,
+                    "product_id": OuterRef("pk"),
+                    "quantity_available__gt": 0,
+                    "expiration_date__isnull": False,
+                }
+
+                if expiration_status == "UPCOMING":
+                    lot_filter.update({
+                        "expiration_date__gte": today,
+                        "expiration_date__lte": today + timedelta(days=30),
+                    })
+                else:
+                    lot_filter["expiration_date__lt"] = today
+
+                queryset = queryset.filter(
+                    Exists(
+                        InventoryLot.objects.filter(**lot_filter),
+                    ),
+                )
+        elif self.request.query_params.get("expiration_status"):
+            raise ValidationError({
+                "branch_id": (
+                    "Debes enviar branch_id para filtrar por vencimiento."
+                ),
+            })
         else:
             queryset = queryset.annotate(
                 current_stock=Value(
