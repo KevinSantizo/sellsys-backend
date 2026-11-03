@@ -779,12 +779,6 @@ class ProductDetailSerializer(
                         "El stock inicial no puede ser negativo."
                     )
 
-                if initial_stock > 0 and not initial_expiration_date:
-                    errors["initial_expiration_date"] = (
-                        "La fecha de vencimiento es obligatoria "
-                        "cuando registras stock inicial."
-                    )
-
                 if (
                     (
                         initial_lot_number
