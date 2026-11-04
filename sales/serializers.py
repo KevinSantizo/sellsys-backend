@@ -14,6 +14,7 @@ from cash.services import get_open_cash_session, create_cash_movement
 from common.access import validate_company_branch_access
 
 from .models import (
+    Customer,
     Payment,
     PaymentMethod,
     Sale,
@@ -53,6 +54,61 @@ def generate_sale_number():
     return (
         f"V-{date_part}-{random_part}"
     )
+
+
+class CustomerSerializer(serializers.ModelSerializer):
+    company_id = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.filter(is_active=True),
+        source="company",
+        write_only=True,
+    )
+
+    class Meta:
+        model = Customer
+        fields = (
+            "id",
+            "company_id",
+            "first_name",
+            "last_name",
+            "phone",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate_first_name(self, value):
+        value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError(
+                "El nombre es obligatorio."
+            )
+
+        return value
+
+    def validate_last_name(self, value):
+        value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError(
+                "El apellido es obligatorio."
+            )
+
+        return value
+
+    def validate_phone(self, value):
+        value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError(
+                "El número de teléfono es obligatorio."
+            )
+
+        return value
 
 
 class SaleItemSerializer(
@@ -105,28 +161,16 @@ class PaymentSerializer(
         read_only_fields = fields
 
 
-class SaleListSerializer(
-    serializers.ModelSerializer,
-):
-    company_name = serializers.CharField(
-        source="company.name",
-        read_only=True,
-    )
-
-    branch_name = serializers.CharField(
-        source="branch.name",
-        read_only=True,
-    )
-
-    status_display = serializers.CharField(
-        source="get_status_display",
-        read_only=True,
-    )
-
+class SaleListSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name", read_only=True)
+    branch_name = serializers.CharField( source="branch.name", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
     created_by_name = serializers.SerializerMethodField()
-    item_count = serializers.IntegerField(
-        read_only=True,
-    )
+    customer_id = serializers.PrimaryKeyRelatedField(source="customer", read_only=True, allow_null=True)
+    payment_count = serializers.SerializerMethodField()
+    paid_total = serializers.SerializerMethodField()
+    balance_due = serializers.SerializerMethodField()
+    item_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Sale
@@ -149,6 +193,10 @@ class SaleListSerializer(
             "created_by_name",
             "completed_at",
             "created_at",
+            "customer_id",
+            "paid_total",
+            "balance_due",
+            "payment_count",
         )
 
         read_only_fields = fields
@@ -170,6 +218,18 @@ class SaleListSerializer(
                 full_name
                 or getattr(user, "email", "")
                 or str(user)
+        )
+
+    def get_payment_count(self, instance):
+        return instance.payments.count()
+
+    def get_paid_total(self, instance):
+        return instance.amount_received
+
+    def get_balance_due(self, instance):
+        return max(
+            instance.total - instance.amount_received,
+            Decimal("0.00"),
         )
 
 
@@ -197,6 +257,12 @@ class SaleDetailSerializer(
     )
 
     created_by_name = serializers.SerializerMethodField()
+
+    customer_id = serializers.PrimaryKeyRelatedField( source="customer", read_only=True, allow_null=True, )
+
+    payment_count = serializers.SerializerMethodField()
+    paid_total = serializers.SerializerMethodField()
+    balance_due = serializers.SerializerMethodField()
 
     items = SaleItemSerializer(
         many=True,
@@ -240,6 +306,10 @@ class SaleDetailSerializer(
             "updated_at",
             "items",
             "payments",
+            "customer_id",
+            "paid_total",
+            "balance_due",
+            "payment_count",
         )
 
         read_only_fields = fields
@@ -263,6 +333,18 @@ class SaleDetailSerializer(
                 or str(user)
         )
 
+    def get_payment_count(self, instance):
+        return instance.payments.count()
+
+    def get_paid_total(self, instance):
+        return instance.amount_received
+
+    def get_balance_due(self, instance):
+        return max(
+            instance.total - instance.amount_received,
+            Decimal("0.00"),
+        )
+
 class SaleItemInputSerializer(
     serializers.Serializer,
 ):
@@ -284,12 +366,8 @@ class SaleItemInputSerializer(
     )
 
 
-class PaymentInputSerializer(
-    serializers.Serializer,
-):
-    method = serializers.ChoiceField(
-        choices=PaymentMethod.choices,
-    )
+class PaymentInputSerializer(serializers.Serializer):
+    method = serializers.ChoiceField(choices=PaymentMethod.choices)
 
     amount = serializers.DecimalField(
         max_digits=14,
@@ -332,6 +410,29 @@ class PaymentInputSerializer(
         return attrs
 
 
+class SalePaymentSerializer(PaymentInputSerializer):
+    cash_session_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        if (
+            attrs["method"] == PaymentMethod.CASH
+            and not attrs.get("cash_session_id")
+        ):
+            raise serializers.ValidationError({
+                "cash_session_id": (
+                    "Debes seleccionar una caja abierta "
+                    "para registrar el abono."
+                )
+            })
+
+        return attrs
+
+
 class SaleCheckoutSerializer(serializers.Serializer,):
     company_id = serializers.UUIDField()
     branch_id = serializers.UUIDField()
@@ -343,6 +444,7 @@ class SaleCheckoutSerializer(serializers.Serializer,):
     payments = PaymentInputSerializer(many=True, allow_empty=False,)
     cart_discount_type = serializers.ChoiceField( choices= Sale.DiscountType.choices, required=False, default=Sale.DiscountType.NONE, )
     cart_discount_value = serializers.DecimalField( max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, default=Decimal("0.00"), )
+    customer_id = serializers.UUIDField( required=False, allow_null=True, )
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -358,6 +460,23 @@ class SaleCheckoutSerializer(serializers.Serializer,):
         )
 
         company = membership.company
+
+        customer = None
+
+        if attrs.get("customer_id"):
+            customer = Customer.objects.filter(
+                id=attrs["customer_id"],
+                company=company,
+            ).first()
+
+            if not customer:
+                raise serializers.ValidationError({
+                    "customer_id": (
+                        "El cliente no existe o no pertenece "
+                        "a esta empresa."
+                    )
+                })
+
         item_data = attrs["items"]
 
         raw_idempotency_key = request.headers.get("Idempotency-Key")
@@ -563,17 +682,20 @@ class SaleCheckoutSerializer(serializers.Serializer,):
             )
         )
 
-        if payment_total < total:
-            missing_amount = quantize_money(total - payment_total)
-
+        if payment_total < total and customer is None:
             raise serializers.ValidationError({
-                "payments": (
-                    "El pago es insuficiente. "
-                    f"Faltan {missing_amount}."
+                "customer_id": (
+                    "Debes seleccionar un cliente "
+                    "para registrar un saldo pendiente."
                 )
             })
 
-        change_amount = quantize_money(payment_total - total)
+        change_amount = quantize_money(
+            max(
+                payment_total - total,
+                Decimal("0.00"),
+            )
+        )
 
         if cash_total > Decimal("0.00") and not attrs.get("cash_session_id"):
             raise serializers.ValidationError({
@@ -603,6 +725,7 @@ class SaleCheckoutSerializer(serializers.Serializer,):
         attrs["total"] = total
         attrs["payment_total"] = payment_total
         attrs["cash_total"] = cash_total
+        attrs["customer"] = customer
 
         return attrs
 
@@ -627,7 +750,13 @@ class SaleCheckoutSerializer(serializers.Serializer,):
         total = validated_data["total"]
         payment_total = validated_data["payment_total"]
         cash_total = validated_data["cash_total"]
-        change_amount = quantize_money(payment_total - total)
+        customer = validated_data.get("customer")
+        change_amount = quantize_money(
+            max(
+                payment_total - total,
+                Decimal("0.00"),
+            )
+        )
         idempotency_key = validated_data.get("idempotency_key")
 
         try:
@@ -639,7 +768,6 @@ class SaleCheckoutSerializer(serializers.Serializer,):
                     sale_number=generate_sale_number(),
                     idempotency_key=idempotency_key,
                     status=SaleStatus.COMPLETED,
-                    customer_name=validated_data.get("customer_name", "").strip(),
                     customer_tax_id=validated_data.get("customer_tax_id", "").strip(),
                     notes=validated_data.get("notes", "").strip(),
                     subtotal=subtotal,
@@ -652,6 +780,15 @@ class SaleCheckoutSerializer(serializers.Serializer,):
                     amount_received=payment_total,
                     change_amount=change_amount,
                     completed_at=timezone.now(),
+                    customer=customer,
+                    customer_name=(
+                        f"{customer.first_name} {customer.last_name}"
+                        if customer
+                        else validated_data.get(
+                            "customer_name",
+                            "",
+                        ).strip()
+                    ),
                 )
         except IntegrityError:
             if idempotency_key:

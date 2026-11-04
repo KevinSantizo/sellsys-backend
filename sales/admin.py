@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    Customer,
     Payment,
     Sale,
     SaleItem,
@@ -232,4 +233,35 @@ class PaymentAdmin(admin.ModelAdmin):
 
     ordering = (
         "-created_at",
+    )
+
+@admin.register(Customer)
+class CustomerAdmin(admin.ModelAdmin):
+    list_display = (
+        "first_name",
+        "last_name",
+        "phone",
+        "company",
+        "created_at",
+    )
+
+    search_fields = (
+        "first_name",
+        "last_name",
+        "phone",
+    )
+
+    list_filter = (
+        "company",
+    )
+
+    readonly_fields = (
+        "id",
+        "created_at",
+        "updated_at",
+    )
+
+    ordering = (
+        "last_name",
+        "first_name",
     )

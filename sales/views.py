@@ -2,14 +2,29 @@
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from django.http import HttpResponse
-from django.db.models import Sum
-from django.db.models.functions import (TruncDate, TruncMonth,)
+from django.db.models import Sum, F, OuterRef, Subquery, Value, DecimalField
+from django.db.models.functions import (TruncDate, TruncMonth, Coalesce)
 from django.utils import timezone
 
 from rest_framework.response import Response
 from rest_framework import status
 
-from django.db.models import (Count, Q,)
+from django.db.models import (
+    Avg,
+    Count,
+    DecimalField,
+    ExpressionWrapper,
+    Exists,
+    F,
+    IntegerField,
+    OuterRef,
+    Prefetch,
+    Q,
+    Subquery,
+    Sum,
+    Value,
+)
+
 from rest_framework import (filters, mixins, status, viewsets,)
 from rest_framework.permissions import (IsAuthenticated,)
 from rest_framework.response import Response
@@ -19,16 +34,15 @@ from companies.models import (CompanyMembership,)
 
 from .access import (get_membership_role_code,)
 from .models import Sale
-from .pagination import SalePagination
-from .serializers import (SaleCheckoutSerializer,SaleDetailSerializer,SaleListSerializer,)
-from .models import Sale, SaleStatus, PaymentMethod
+from .pagination import SalePagination, PageNumberPagination
+from .serializers import (CustomerSerializer, SaleCheckoutSerializer, SaleDetailSerializer, SaleListSerializer, SalePaymentSerializer)
+from .models import Sale, SaleStatus, PaymentMethod, Customer, Payment, SaleItem
 
 from django.db import transaction
 
-from rest_framework.exceptions import ValidationError
 
-from cash.models import CashMovement, CashMovementType, CashMovementSource, CashSessionStatus
-from cash.services import get_open_cash_session, reverse_cash_movement
+from cash.models import CashMovement, CashMovementType, CashMovementSource, CashSessionStatus, CashMovementDirection
+from cash.services import get_open_cash_session, reverse_cash_movement, create_cash_movement
 from inventory.services import InventoryStockError, restore_sale_stock
 from common.access import (
     get_user_company_branch_scope,
@@ -36,6 +50,99 @@ from common.access import (
 )
 from .services.sale_receipt import build_sale_receipt_pdf
 
+from rest_framework.exceptions import (
+    PermissionDenied,
+    ValidationError,
+)
+
+
+class CustomerPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+class CustomerViewSet(
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    pagination_class = CustomerPagination
+    permission_classes = (IsAuthenticated,)
+    serializer_class = CustomerSerializer
+
+    filter_backends = (
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    )
+
+    search_fields = (
+        "first_name",
+        "last_name",
+        "phone",
+    )
+
+    ordering_fields = (
+        "first_name",
+        "last_name",
+        "created_at",
+        "updated_at",
+    )
+
+    ordering = (
+        "last_name",
+        "first_name",
+    )
+
+    def get_queryset(self):
+        company_ids = (
+            CompanyMembership.objects
+            .filter(
+                user=self.request.user,
+                is_active=True,
+                company__is_active=True,
+            )
+            .values_list("company_id", flat=True)
+        )
+
+        queryset = Customer.objects.filter(
+            company_id__in=company_ids,
+        )
+
+        company_id = self.request.query_params.get("company_id")
+
+        if company_id:
+            queryset = queryset.filter(
+                company_id=company_id,
+            )
+
+        return queryset
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+
+        has_access = CompanyMembership.objects.filter(
+            user=self.request.user,
+            company=company,
+            is_active=True,
+            company__is_active=True,
+        ).exists()
+
+        if not has_access:
+            raise PermissionDenied(
+                "No tienes acceso a esta empresa."
+            )
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        customer = serializer.instance
+
+        serializer.save(
+            company=customer.company,
+        )
 
 class SaleViewSet(
     mixins.ListModelMixin,
@@ -140,6 +247,81 @@ class SaleViewSet(
 
         return queryset.distinct()
 
+    def accounts_receivable(self, request):
+        payment_total_subquery = (
+            Payment.objects
+            .filter(
+                sale_id=OuterRef("pk"),
+            )
+            .values("sale_id")
+            .annotate(
+                total=Sum("amount"),
+            )
+            .values("total")[:1]
+        )
+
+        queryset = (
+            self.get_queryset()
+            .filter(
+                status=SaleStatus.COMPLETED,
+                customer__isnull=False,
+            )
+            .select_related("customer")
+            .prefetch_related(
+                "items",
+                "payments",
+            )
+            .annotate(
+                paid_total_for_receivable=Coalesce(
+                    Subquery(
+                        payment_total_subquery,
+                        output_field=DecimalField(
+                            max_digits=12,
+                            decimal_places=2,
+                        ),
+                    ),
+                    F("amount_received"),
+                    Value(Decimal("0.00")),
+                    output_field=DecimalField(
+                        max_digits=12,
+                        decimal_places=2,
+                    ),
+                )
+            )
+            .filter(
+                paid_total_for_receivable__lt=F("total"),
+            )
+        )
+
+        customer_id = request.query_params.get("customer_id")
+
+        if customer_id:
+            queryset = queryset.filter(
+                customer_id=customer_id,
+            )
+
+        queryset = self.filter_queryset(queryset)
+
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = SaleDetailSerializer(
+                page,
+                many=True,
+                context=self.get_serializer_context(),
+            )
+
+            return self.get_paginated_response(
+                serializer.data,
+            )
+
+        serializer = SaleDetailSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+
+        return Response(serializer.data)
 
     def weekly_summary(self, request):
         company_id = request.query_params.get("company_id")
@@ -510,7 +692,11 @@ class SaleViewSet(
             }
         )
 
-    def checkout(self, request): 
+    def checkout(self, request):
+        print("CHECKOUT EJECUTADO")
+        print("PATH:", request.path)
+        print("METHOD:", request.method)
+        print("DATA:", request.data)
         serializer = SaleCheckoutSerializer(
             data=request.data,
             context=self.get_serializer_context(),
@@ -521,6 +707,14 @@ class SaleViewSet(
         )
 
         sale = serializer.save()
+
+        print(
+            "SALE DEVOLVED:",
+            sale.id,
+            sale.sale_number,
+            sale.status,
+            sale.created_at,
+        )
 
         response_serializer = (
             SaleDetailSerializer(
@@ -580,7 +774,132 @@ class SaleViewSet(
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
 
         return response
-    
+
+
+    def add_payment(self, request, pk=None):
+        input_serializer = SalePaymentSerializer(
+            data=request.data,
+        )
+        input_serializer.is_valid(
+            raise_exception=True,
+        )
+
+        payment_data = input_serializer.validated_data
+
+        with transaction.atomic():
+            try:
+                sale = (
+                    self.get_queryset()
+                    .select_for_update()
+                    .get(pk=pk)
+                )
+            except Sale.DoesNotExist:
+                return Response(
+                    {
+                        "detail": (
+                            "La venta no existe "
+                            "o no tienes acceso a ella."
+                        )
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if sale.status != SaleStatus.COMPLETED:
+                raise ValidationError({
+                    "detail": (
+                        "Solo puedes registrar abonos "
+                        "en ventas completadas."
+                    )
+                })
+
+            if not sale.customer_id:
+                raise ValidationError({
+                    "customer_id": (
+                        "La venta no tiene un cliente "
+                        "asociado."
+                    )
+                })
+
+            paid_total = (
+                    sale.payments.aggregate(
+                        total=Sum("amount"),
+                    )["total"]
+                    or sale.amount_received
+                    or Decimal("0.00")
+            )
+
+            balance_due = sale.total - paid_total
+            amount = payment_data["amount"]
+
+            if balance_due <= Decimal("0.00"):
+                raise ValidationError({
+                    "amount": "La venta ya está pagada."
+                })
+
+            if amount > balance_due:
+                raise ValidationError({
+                    "amount": (
+                        f"El abono no puede superar "
+                        f"el saldo pendiente de {balance_due}."
+                    )
+                })
+
+            cash_session = None
+
+            if payment_data["method"] == PaymentMethod.CASH:
+                cash_session = get_open_cash_session(
+                    cash_session_id=payment_data.get(
+                        "cash_session_id",
+                    ),
+                    company=sale.company,
+                    branch=sale.branch,
+                )
+
+            payment = Payment.objects.create(
+                sale=sale,
+                created_by=request.user,
+                method=payment_data["method"],
+                amount=amount,
+                reference=payment_data.get(
+                    "reference",
+                    "",
+                ),
+            )
+
+            sale.amount_received = paid_total + amount
+            sale.change_amount = Decimal("0.00")
+            sale.save(
+                update_fields=[
+                    "amount_received",
+                    "change_amount",
+                    "updated_at",
+                ]
+            )
+
+            if cash_session:
+                create_cash_movement(
+                    cash_session=cash_session,
+                    direction=CashMovementDirection.IN,
+                    movement_type=CashMovementType.SALE,
+                    amount=amount,
+                    source_type=CashMovementSource.SALE,
+                    source_id=payment.id,
+                    reference=sale.sale_number,
+                    notes=(
+                        f"Abono de venta "
+                        f"{sale.sale_number}"
+                    ),
+                    user=request.user,
+                )
+
+        return Response(
+            SaleDetailSerializer(
+                sale,
+                context=self.get_serializer_context(),
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
 
     def cancel(self, request, pk=None):
         with transaction.atomic():
@@ -637,25 +956,56 @@ class SaleViewSet(
                              "total"] or Decimal("0.00")
             cash_effect = cash_total - sale.change_amount
 
-            original_cash_movement = None
+            original_cash_movements = []
             cash_session = None
 
             if cash_effect > Decimal("0.00"):
-                try:
-                    original_cash_movement = CashMovement.objects.select_for_update().select_related(
-                        "cash_session").get(
+                payment_ids = list(
+                    sale.payments.values_list(
+                        "id",
+                        flat=True,
+                    )
+                )
+
+                source_ids = [
+                    sale.id,
+                    *payment_ids,
+                ]
+
+                original_cash_movements = list(
+                    CashMovement.objects
+                    .select_for_update()
+                    .select_related("cash_session")
+                    .filter(
                         source_type=CashMovementSource.SALE,
-                        source_id=sale.id,
+                        source_id__in=source_ids,
                         movement_type=CashMovementType.SALE,
                     )
-                except CashMovement.DoesNotExist:
+                    .order_by(
+                        "created_at",
+                        "id",
+                    )
+                )
+
+                if not original_cash_movements:
                     raise ValidationError({
-                        "detail": "No se encontró el movimiento de caja original de la venta."
+                        "detail": (
+                            "No se encontraron los movimientos "
+                            "de caja de la venta."
+                        )
                     })
 
-                original_cash_session = original_cash_movement.cash_session
+                original_cash_session = next(
+                    (
+                        movement.cash_session
+                        for movement in original_cash_movements
+                        if movement.cash_session.status
+                           == CashSessionStatus.OPEN
+                    ),
+                    None,
+                )
 
-                if original_cash_session.status == CashSessionStatus.OPEN:
+                if original_cash_session:
                     cash_session = get_open_cash_session(
                         cash_session_id=original_cash_session.id,
                         company=sale.company,
@@ -663,7 +1013,9 @@ class SaleViewSet(
                     )
                 else:
                     cash_session = get_open_cash_session(
-                        cash_session_id=request.data.get("cash_session_id"),
+                        cash_session_id=request.data.get(
+                            "cash_session_id",
+                        ),
                         company=sale.company,
                         branch=sale.branch,
                     )
@@ -678,14 +1030,18 @@ class SaleViewSet(
                     "detail": str(error)
                 }) from error
 
-            if original_cash_movement and cash_session:
-                reverse_cash_movement(
-                    original_movement=original_cash_movement,
-                    cash_session=cash_session,
-                    user=request.user,
-                    reference=sale.sale_number,
-                    notes=f"Reversión por cancelación de venta {sale.sale_number}",
-                )
+            if cash_session and original_cash_movements:
+                for original_cash_movement in original_cash_movements:
+                    reverse_cash_movement(
+                        original_movement=original_cash_movement,
+                        cash_session=cash_session,
+                        user=request.user,
+                        reference=sale.sale_number,
+                        notes=(
+                            f"Reversión por cancelación "
+                            f"de venta {sale.sale_number}"
+                        ),
+                    )
 
             sale.mark_as_cancelled()
             sale.save(update_fields=["status", "cancelled_at", "updated_at"])

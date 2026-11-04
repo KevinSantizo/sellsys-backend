@@ -49,6 +49,15 @@ class Sale(models.Model):
         related_name="sales",
     )
 
+    customer = models.ForeignKey(
+        "Customer",
+        on_delete=models.PROTECT,
+        related_name="sales",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -504,3 +513,31 @@ class Payment(models.Model):
             f"{self.get_method_display()} - "
             f"{self.amount}"
         )
+
+
+class Customer(models.Model):
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.PROTECT,
+        related_name="customers",
+    )
+
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=30)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "customers"
+        ordering = ("last_name", "first_name")
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name}"

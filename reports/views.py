@@ -10,9 +10,9 @@ from django.db.models import (
     OuterRef,
     Prefetch,
     Q,
-    Sum,
+    Sum, Subquery, Value, IntegerField,
 )
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncDate, Coalesce
 from django.utils import timezone
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
@@ -40,7 +40,7 @@ from purchases.models import (
 from sales.models import (
     Sale,
     SaleItem,
-    SaleStatus,
+    SaleStatus, Payment,
 )
 from .serializers import (
     ExpiringProductsReportQuerySerializer,
@@ -50,6 +50,8 @@ from .serializers import (
 from django.http import HttpResponse
 from branches.models import Branch
 from .services.sales_export import (
+    build_accounts_receivable_excel,
+    build_accounts_receivable_pdf,
     build_sales_excel,
     build_sales_pdf,
 )
@@ -495,6 +497,106 @@ def get_sales_report_queryset(
             "-id",
         )
     )
+
+def get_accounts_receivable_export_queryset(
+    *,
+    company_id,
+    branch_id,
+    customer_id=None,
+    search=None,
+):
+    decimal_field = DecimalField(
+        max_digits=12,
+        decimal_places=2,
+    )
+
+    payment_total_subquery = (
+        Payment.objects
+        .filter(
+            sale_id=OuterRef("pk"),
+        )
+        .values("sale_id")
+        .annotate(
+            total=Sum("amount"),
+        )
+        .values("total")[:1]
+    )
+
+    payment_count_subquery = (
+        Payment.objects
+        .filter(
+            sale_id=OuterRef("pk"),
+        )
+        .values("sale_id")
+        .annotate(
+            total=Count("id"),
+        )
+        .values("total")[:1]
+    )
+
+    paid_total_expression = Coalesce(
+        Subquery(
+            payment_total_subquery,
+            output_field=decimal_field,
+        ),
+        F("amount_received"),
+        Value(Decimal("0.00")),
+        output_field=decimal_field,
+    )
+
+    balance_due_expression = ExpressionWrapper(
+        F("total") - paid_total_expression,
+        output_field=decimal_field,
+    )
+
+    queryset = (
+        Sale.objects
+        .filter(
+            company_id=company_id,
+            branch_id=branch_id,
+            status=SaleStatus.COMPLETED,
+            customer_id__isnull=False,
+        )
+        .select_related(
+            "company",
+            "branch",
+            "customer",
+        )
+        .annotate(
+            paid_total_export=paid_total_expression,
+            balance_due_export=balance_due_expression,
+            payment_count_export=Coalesce(
+                Subquery(
+                    payment_count_subquery,
+                    output_field=IntegerField(),
+                ),
+                Value(0),
+                output_field=IntegerField(),
+            ),
+        )
+        .filter(
+            balance_due_export__gt=Decimal("0.00"),
+        )
+    )
+
+    if customer_id:
+        queryset = queryset.filter(
+            customer_id=customer_id,
+        )
+
+    if search:
+        queryset = queryset.filter(
+            Q(sale_number__icontains=search)
+            | Q(customer_name__icontains=search)
+            | Q(customer__first_name__icontains=search)
+            | Q(customer__last_name__icontains=search)
+        )
+
+    return queryset.order_by(
+        "-completed_at",
+        "-id",
+    )
+
 
 class ReportPagination(PageNumberPagination):
     page_size = 10
@@ -2352,6 +2454,217 @@ class SalesExcelReportView(APIView):
         )
         return response
 
+def get_accounts_receivable_export_queryset(
+    *,
+    company_id,
+    branch_id,
+    customer_id=None,
+    search=None,
+):
+    decimal_field = DecimalField(
+        max_digits=12,
+        decimal_places=2,
+    )
+
+    payment_total_subquery = (
+        Payment.objects
+        .filter(
+            sale_id=OuterRef("pk"),
+        )
+        .values("sale_id")
+        .annotate(
+            total=Sum("amount"),
+        )
+        .values("total")[:1]
+    )
+
+    payment_count_subquery = (
+        Payment.objects
+        .filter(
+            sale_id=OuterRef("pk"),
+        )
+        .values("sale_id")
+        .annotate(
+            total=Count("id"),
+        )
+        .values("total")[:1]
+    )
+
+    paid_total_expression = Coalesce(
+        Subquery(
+            payment_total_subquery,
+            output_field=decimal_field,
+        ),
+        F("amount_received"),
+        Value(Decimal("0.00")),
+        output_field=decimal_field,
+    )
+
+    balance_due_expression = ExpressionWrapper(
+        F("total") - paid_total_expression,
+        output_field=decimal_field,
+    )
+
+    queryset = (
+        Sale.objects
+        .filter(
+            company_id=company_id,
+            branch_id=branch_id,
+            status=SaleStatus.COMPLETED,
+            customer_id__isnull=False,
+        )
+        .select_related(
+            "company",
+            "branch",
+            "customer",
+        )
+        .annotate(
+            paid_total_export=paid_total_expression,
+            balance_due_export=balance_due_expression,
+            payment_count_export=Coalesce(
+                Subquery(
+                    payment_count_subquery,
+                    output_field=IntegerField(),
+                ),
+                Value(0),
+                output_field=IntegerField(),
+            ),
+        )
+        .filter(
+            balance_due_export__gt=Decimal("0.00"),
+        )
+    )
+
+    if customer_id:
+        queryset = queryset.filter(
+            customer_id=customer_id,
+        )
+
+    if search:
+        queryset = queryset.filter(
+            Q(sale_number__icontains=search)
+            | Q(customer_name__icontains=search)
+            | Q(customer__first_name__icontains=search)
+            | Q(customer__last_name__icontains=search)
+        )
+
+    return queryset.order_by(
+        "-completed_at",
+        "-id",
+    )
+
+def build_accounts_receivable_export_response(
+    request,
+    *,
+    builder,
+    content_type,
+    extension,
+):
+    company_id = request.query_params.get(
+        "company_id",
+    )
+
+    branch_id = request.query_params.get(
+        "branch_id",
+    )
+
+    if not company_id:
+        raise ValidationError({
+            "company_id": (
+                "El parámetro company_id "
+                "es obligatorio."
+            ),
+        })
+
+    if not branch_id:
+        raise ValidationError({
+            "branch_id": (
+                "El parámetro branch_id "
+                "es obligatorio."
+            ),
+        })
+
+    validate_company_branch_access(
+        request.user,
+        company_id,
+        branch_id,
+    )
+
+    branch = (
+        Branch.objects
+        .select_related("company")
+        .get(
+            id=branch_id,
+            company_id=company_id,
+        )
+    )
+
+    sales = list(
+        get_accounts_receivable_export_queryset(
+            company_id=company_id,
+            branch_id=branch_id,
+            customer_id=request.query_params.get(
+                "customer_id",
+            ),
+            search=request.query_params.get(
+                "search",
+            ),
+        )
+    )
+
+    file = builder(
+        sales=sales,
+        company_name=branch.company.name,
+        branch_name=branch.name,
+    )
+
+    response = HttpResponse(
+        file.getvalue(),
+        content_type=content_type,
+    )
+
+    response["Content-Disposition"] = (
+        f'attachment; '
+        f'filename="cuentas_por_cobrar.{extension}"'
+    )
+
+    return response
+
+class AccountsReceivableExcelReportView(
+    APIView,
+):
+    permission_classes = [
+        IsAuthenticated,
+    ]
+
+    def get(self, request):
+        return build_accounts_receivable_export_response(
+            request,
+            builder=build_accounts_receivable_excel,
+            content_type=(
+                "application/"
+                "vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            extension="xlsx",
+        )
+
+
+class AccountsReceivablePdfReportView(
+    APIView,
+):
+    permission_classes = [
+        IsAuthenticated,
+    ]
+
+    def get(self, request):
+        return build_accounts_receivable_export_response(
+            request,
+            builder=build_accounts_receivable_pdf,
+            content_type="application/pdf",
+            extension="pdf",
+        )
+
 class SalesPdfReportView(APIView):
     permission_classes = [
         IsAuthenticated,
@@ -2963,8 +3276,6 @@ class CashPdfReportView(APIView):
         )
         response[
             "Content-Disposition"
-        ] = (
-            f'attachment; filename="{filename}"'
-        )
+        ] = f'attachment; filename="{filename}"'
         return response
 

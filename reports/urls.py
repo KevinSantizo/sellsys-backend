@@ -22,6 +22,8 @@ from .views import (
     SalesExcelReportView,
     SalesPdfReportView,
     SalesReportView,
+    AccountsReceivableExcelReportView,
+    AccountsReceivablePdfReportView,
 )
 
 urlpatterns = [
@@ -46,4 +48,6 @@ urlpatterns = [
     path("inventory/export/pdf/", InventoryPdfReportView.as_view(), name="inventory-export-pdf"),
     path("profitability/export/excel/", ProfitabilityExcelReportView.as_view(), name="profitability-export-excel"),
     path("profitability/export/pdf/", ProfitabilityPdfReportView.as_view(), name="profitability-export-pdf"),
+    path("accounts-receivable/export/excel/", AccountsReceivableExcelReportView.as_view(), name="accounts-receivable-export-excel",),
+    path("accounts-receivable/export/pdf/", AccountsReceivablePdfReportView.as_view(), name="accounts-receivable-export-pdf",),
 ]

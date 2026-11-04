@@ -203,6 +203,12 @@ class UnitOfMeasureListSerializer(
 class UnitOfMeasureDetailSerializer(
     CompanyOwnedModelSerializer
 ):
+    symbol = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+
     unit_type_display = serializers.CharField(
         source='get_unit_type_display',
         read_only=True,
@@ -230,6 +236,18 @@ class UnitOfMeasureDetailSerializer(
             'updated_at',
         )
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        raw_symbol = attrs.get('symbol')
+        if not raw_symbol or not raw_symbol.strip():
+            name = attrs.get('name')
+            if name is None and self.instance is not None:
+                name = self.instance.name
+
+            attrs['symbol'] = (name or '').strip()
+
+        return attrs
+
 class ProductListSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(
         source="company.name",
@@ -249,6 +267,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     )
 
     base_unit_symbol = serializers.CharField(
+        required=False,
         source="base_unit.symbol",
         read_only=True,
         allow_null=True,
@@ -266,6 +285,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     )
 
     content_unit_symbol = serializers.CharField(
+        required=False,
         source="content_unit.symbol",
         read_only=True,
         allow_null=True,
