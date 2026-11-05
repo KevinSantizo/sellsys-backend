@@ -90,25 +90,7 @@ class CustomerSerializer(serializers.ModelSerializer):
 
         return value
 
-    def validate_last_name(self, value):
-        value = value.strip()
 
-        if not value:
-            raise serializers.ValidationError(
-                "El apellido es obligatorio."
-            )
-
-        return value
-
-    def validate_phone(self, value):
-        value = value.strip()
-
-        if not value:
-            raise serializers.ValidationError(
-                "El número de teléfono es obligatorio."
-            )
-
-        return value
 
 
 class SaleItemSerializer(

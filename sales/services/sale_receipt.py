@@ -208,6 +208,49 @@ def build_sale_receipt_pdf(
         sale.items.all()
     )
 
+    payments = list(sale.payments.all())
+
+    paid_total = sum(
+        (
+            Decimal(payment.amount or "0.00")
+            for payment in payments
+        ),
+        Decimal("0.00"),
+    )
+
+    if paid_total <= Decimal("0.00"):
+        paid_total = Decimal(
+            sale.amount_received or "0.00"
+        )
+
+    total_amount = Decimal(
+        sale.total or "0.00"
+    )
+
+    balance_due = max(
+        total_amount - paid_total,
+        Decimal("0.00"),
+    )
+
+    has_balance_due = (
+            balance_due > Decimal("0.00")
+    )
+
+    extra_summary_rows = (
+            1 + int(has_balance_due)
+    )
+
+    payment_method_label: str = str(
+        get_sale_payment_method(sale)
+        or "Sin pago"
+    )
+
+    paid_label: str = (
+        "Efectivo recibido"
+        if payment_method_label == "Efectivo"
+        else "Total pagado"
+    )
+
     company = sale.company
     branch = sale.branch
 
@@ -266,7 +309,7 @@ def build_sale_receipt_pdf(
     # Más alto para darle aire
     # al logo y al encabezado.
     base_height = (
-        180 * mm
+        (180 + extra_summary_rows * 6) * mm
     )
 
     item_height = (
@@ -876,7 +919,7 @@ def build_sale_receipt_pdf(
     )
 
     summary_height = (
-        37 * mm
+        (37 + extra_summary_rows * 6) * mm
     )
 
     summary_x = (
@@ -958,6 +1001,59 @@ def build_sale_receipt_pdf(
         - 8.5 * mm
     )
 
+    # PAGO RECIBIDO
+
+    pdf.setFillColor(
+        TEXT_COLOR
+    )
+
+    pdf.setFont(
+        "Helvetica-Bold",
+        8,
+    )
+
+    pdf.drawString(
+        summary_left,
+        row_y,
+        paid_label,
+    )
+
+    pdf.drawRightString(
+        summary_right,
+        row_y,
+        format_money(paid_total),
+    )
+
+    row_y -= (
+            6 * mm
+    )
+
+    if has_balance_due:
+        pdf.setFillColor(
+            colors.HexColor("#C62828")
+        )
+
+        pdf.setFont(
+            "Helvetica-Bold",
+            8,
+        )
+
+        pdf.drawString(
+            summary_left,
+            row_y,
+            "Saldo pendiente",
+        )
+
+        pdf.drawRightString(
+            summary_right,
+            row_y,
+            format_money(balance_due),
+        )
+
+        row_y -= (
+                6 * mm
+        )
+
     pdf.setFillColor(
         SECONDARY_TEXT_COLOR
     )
@@ -980,9 +1076,7 @@ def build_sale_receipt_pdf(
     pdf.drawRightString(
         summary_right,
         row_y,
-        get_sale_payment_method(
-            sale
-        ),
+        payment_method_label
     )
 
     row_y -= (
