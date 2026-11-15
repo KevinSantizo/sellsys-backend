@@ -505,6 +505,7 @@ class ProductDetailSerializer(
             "initial_expiration_date",
             "image_url",
             "image_public_id",
+            "current_stock"
         )
 
         read_only_fields = (
