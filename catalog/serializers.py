@@ -408,7 +408,6 @@ class ProductDetailSerializer(
         min_value=Decimal("0.000"),
         write_only=True,
         required=False,
-        default=Decimal("0.000"),
     )
 
     initial_lot_number = serializers.CharField(
@@ -425,6 +424,12 @@ class ProductDetailSerializer(
         required=False,
         allow_null=True,
         default=None,
+    )
+
+    current_stock = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+        read_only=True,
     )
 
     def _get_initial_lot(self, obj):
@@ -839,6 +844,46 @@ class ProductDetailSerializer(
 
 
         return attrs
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        stock_was_sent = "initial_stock" in validated_data
+
+        branch_id = validated_data.pop("branch_id", None)
+        stock_value = validated_data.pop("initial_stock", None)
+
+        validated_data.pop("initial_lot_number", None)
+        validated_data.pop("initial_expiration_date", None)
+
+        product = super().update(
+            instance,
+            validated_data,
+        )
+
+        if (
+                not stock_was_sent
+                or product.product_type != Product.ProductType.PRODUCT
+                or not product.track_inventory
+        ):
+            return product
+
+        branch = Branch.objects.get(
+            id=branch_id,
+            company=product.company,
+            is_active=True,
+        )
+
+        ProductStock.objects.update_or_create(
+            company=product.company,
+            branch=branch,
+            product=product,
+            defaults={
+                "quantity": stock_value,
+            },
+        )
+
+        return product
+
 
     @transaction.atomic
     def create(self, validated_data):
