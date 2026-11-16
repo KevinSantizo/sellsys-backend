@@ -269,7 +269,6 @@ class ProductViewSet(CatalogBaseViewSet):
         "name",
         "sku",
         "barcode",
-        "description",
     )
 
     ordering_fields = (
