@@ -187,7 +187,13 @@ class CashSessionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Gener
 
         with transaction.atomic():
             try:
-                cash_session = self.get_queryset().select_for_update().get(pk=pk)
+                cash_session = (
+                    self.get_queryset()
+                    .filter(pk=pk)
+                    .select_related(None)
+                    .select_for_update(of=("self",))
+                    .get()
+                )
             except CashSession.DoesNotExist:
                 raise ValidationError({ "detail": "La sesión de caja no existe o no tienes acceso a ella." })
 
