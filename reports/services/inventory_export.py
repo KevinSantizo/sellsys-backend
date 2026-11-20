@@ -26,6 +26,12 @@ from reportlab.platypus import (
 )
 
 
+MAX_IMAGE_DOWNLOAD_BYTES = 1 * 1024 * 1024
+MAX_IMAGE_PIXELS = 4_000_000
+MAX_IMAGE_SIDE = 320
+IMAGE_DOWNLOAD_TIMEOUT = 3
+
+
 def _decimal(value):
     return value or Decimal("0.00")
 
@@ -34,27 +40,130 @@ def _quantity(value):
     return value or Decimal("0.000")
 
 
+def _cloudinary_thumbnail_url(image_url):
+    if "res.cloudinary.com" not in image_url:
+        return image_url
+
+    upload_marker = "/upload/"
+
+    if upload_marker not in image_url:
+        return image_url
+
+    return image_url.replace(
+        upload_marker,
+        "/upload/w_320,h_320,c_limit,q_auto/",
+        1,
+    )
+
+
+def _read_limited_response(response):
+    content_length = response.headers.get("Content-Length")
+
+    if content_length:
+        try:
+            if int(content_length) > MAX_IMAGE_DOWNLOAD_BYTES:
+                return None
+        except (TypeError, ValueError):
+            pass
+
+    chunks = []
+    total_size = 0
+
+    while True:
+        chunk = response.read(64 * 1024)
+
+        if not chunk:
+            break
+
+        total_size += len(chunk)
+
+        if total_size > MAX_IMAGE_DOWNLOAD_BYTES:
+            return None
+
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
+def _normalize_image_bytes(image_bytes):
+    if not image_bytes or len(image_bytes) > MAX_IMAGE_DOWNLOAD_BYTES:
+        return None
+
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(BytesIO(image_bytes)) as source_image:
+            if source_image.width * source_image.height > MAX_IMAGE_PIXELS:
+                return None
+
+            resampling = getattr(
+                PILImage,
+                "Resampling",
+                PILImage,
+            )
+
+            source_image.thumbnail(
+                (MAX_IMAGE_SIDE, MAX_IMAGE_SIDE),
+                resampling.LANCZOS,
+            )
+
+            if source_image.mode in ("RGBA", "LA"):
+                rgba_image = source_image.convert("RGBA")
+                normalized_image = PILImage.new(
+                    "RGB",
+                    rgba_image.size,
+                    "white",
+                )
+                normalized_image.paste(
+                    rgba_image,
+                    mask=rgba_image.getchannel("A"),
+                )
+                rgba_image.close()
+            else:
+                normalized_image = source_image.convert("RGB")
+
+            output = BytesIO()
+            normalized_image.save(
+                output,
+                format="JPEG",
+                quality=78,
+                optimize=True,
+            )
+            normalized_image.close()
+            return output.getvalue()
+    except Exception:
+        return None
+
+
 def _product_image_bytes(product):
-    """Obtiene la imagen remota sin interrumpir la generación del reporte."""
+    """Descarga una miniatura limitada sin interrumpir el reporte."""
     image_url = getattr(product, "image_url", None)
 
     if not image_url:
         return None
 
+    image_url = str(image_url)
+
     try:
         if image_url.startswith("data:"):
             _, encoded_data = image_url.split(",", 1)
-            return b64decode(encoded_data)
+            raw_image = b64decode(encoded_data)
+        else:
+            request = Request(
+                _cloudinary_thumbnail_url(image_url),
+                headers={
+                    "Accept": "image/*",
+                    "User-Agent": "SellSys inventory report",
+                },
+            )
 
-        request = Request(
-            image_url,
-            headers={
-                "User-Agent": "SellSys inventory report",
-            },
-        )
+            with urlopen(
+                request,
+                timeout=IMAGE_DOWNLOAD_TIMEOUT,
+            ) as response:
+                raw_image = _read_limited_response(response)
 
-        with urlopen(request, timeout=8) as response:
-            return response.read()
+        return _normalize_image_bytes(raw_image)
     except Exception:
         # Una imagen dañada o inaccesible no debe impedir descargar el reporte.
         return None
